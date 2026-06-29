@@ -1,5 +1,8 @@
 config_version: 1
 default_workspace: null
+config_location:
+  default_path: ~/.config/the-writer-and-reader/config.yaml
+  export_secrets_by_default: false
 providers:
   ollama:
     type: local_cli
@@ -14,9 +17,10 @@ providers:
     type: local_openai_compatible
     enabled: false
     base_url: http://localhost:1234/v1
+    api_key_env: null
   openai:
     type: online_openai_compatible
-    enabled: true
+    enabled: false
     base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
 model_profiles:
@@ -35,14 +39,17 @@ model_profiles:
     intelligence: medium
     context_window: 32768
     best_for:
+      - planning
       - scene_generation
       - chapter_generation
       - style_refine
+      - review_fix
   online_writer:
     provider: openai
     model: gpt-5.5
     intelligence: very_high
     context_window: 128000
+    requires_explicit_enable: true
     best_for:
       - difficult_rewrite
       - issue_explanation
@@ -52,6 +59,7 @@ model_profiles:
     model: gpt-5.5
     intelligence: very_high
     context_window: 128000
+    requires_explicit_enable: true
     best_for:
       - story_creation
       - canon_edit
@@ -63,9 +71,11 @@ fallback_chains:
     - local_small
   local_first_with_online_fallback:
     - local_writer
+    - local_small
     - online_writer
   online_allowed:
     - local_writer
+    - local_small
     - online_writer
   online_only_high_accuracy:
     - online_story_architect
@@ -98,6 +108,10 @@ writing_stages:
     intelligence: low
     creativity: low
     provider_group: local_first
+  summary_update:
+    intelligence: low
+    creativity: low
+    provider_group: local_first
 review_policy:
   initial_review:
     allow_local: true
@@ -110,8 +124,11 @@ review_policy:
 story_tools:
   provider_group: online_only_high_accuracy
   allow_local: false
+  require_explicit_online_enable: true
   require_review_before_write: true
 privacy:
-  allow_online_for_story_content: true
+  allow_online_for_story_content: false
   allow_online_for_hidden_canon: false
+  require_confirmation_for_any_online_story_content: true
   require_confirmation_for_online_hidden_canon: true
+  redact_secrets_on_export: true

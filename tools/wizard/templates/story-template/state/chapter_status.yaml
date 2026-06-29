@@ -1,1 +1,9 @@
+status_version: 1
+story_id: story-id
+current_chapter: null
 chapters: {}
+gates:
+  require_review_before_accept: true
+  require_blocking_reviewers_clear: true
+  allow_writer_explanation_once: true
+  rereview_after_explanation_requires_higher_intelligence: true

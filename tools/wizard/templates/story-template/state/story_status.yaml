@@ -1,1 +1,14 @@
-status: not_started
+status_version: 1
+story_id: story-id
+title: Untitled Story
+phase: template
+active_part: null
+active_chapter: null
+language:
+  primary: null
+  forbidden: []
+canon_updates:
+  pending: 0
+  approved: 0
+  rejected: 0
+  merged: 0

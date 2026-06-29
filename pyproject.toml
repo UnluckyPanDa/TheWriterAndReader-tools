@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "the-writer-and-reader-tools"
+version = "0.1.0"
+description = "Local-first tooling for TheWriterAndReader story workspaces."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Private" }
+authors = [{ name = "TheWriterAndReader maintainers" }]
+dependencies = [
+  "PyYAML>=6.0.1",
+  "jsonschema>=4.22.0",
+  "requests>=2.32.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2.0",
+]
+
+[project.scripts]
+twr = "cli.twr:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cli*", "shared*"]
+namespaces = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

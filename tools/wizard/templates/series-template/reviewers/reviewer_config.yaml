@@ -1,1 +1,49 @@
-# Series reviewer config
+config_version: 1
+defaults:
+  provider_group: local_first_with_online_fallback
+  intelligence: high
+  can_block_gate: true
+  applies_to:
+    - story
+    - chapter
+series_reviewers:
+  timeline_continuity:
+    enabled: true
+    source: reviewers/series_continuity/timeline_continuity.md
+    can_block_gate: true
+    provider_group: local_first_with_online_fallback
+    intelligence: high
+  entity_state_continuity:
+    enabled: true
+    source: reviewers/series_continuity/entity_state_continuity.md
+    can_block_gate: true
+    provider_group: local_first_with_online_fallback
+    intelligence: high
+  cross_story_continuity:
+    enabled: true
+    source: reviewers/series_continuity/cross_story_continuity.md
+    can_block_gate: true
+    provider_group: local_first_with_online_fallback
+    intelligence: high
+  series_reveal_visibility:
+    enabled: true
+    source: reviewers/series_continuity/series_reveal_visibility.md
+    can_block_gate: true
+    provider_group: local_first_with_online_fallback
+    intelligence: high
+  series_name_state:
+    enabled: true
+    source: reviewers/series_continuity/series_name_state.md
+    can_block_gate: true
+    provider_group: local_first
+    intelligence: medium
+  series_rule_state:
+    enabled: true
+    source: reviewers/series_continuity/series_rule_state.md
+    can_block_gate: true
+    provider_group: local_first_with_online_fallback
+    intelligence: high
+copy_policy:
+  copy_into_story_on_create: true
+  auto_update_story_copies: false
+  manual_resync_allowed: true
