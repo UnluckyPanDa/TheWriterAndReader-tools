@@ -1,0 +1,117 @@
+config_version: 1
+default_workspace: null
+providers:
+  ollama:
+    type: local_cli
+    enabled: true
+    command: ollama
+    timeout_seconds: 600
+    run_args:
+      - run
+      - "{model}"
+    stdin_prompt: true
+  lmstudio:
+    type: local_openai_compatible
+    enabled: false
+    base_url: http://localhost:1234/v1
+  openai:
+    type: online_openai_compatible
+    enabled: true
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+model_profiles:
+  local_small:
+    provider: ollama
+    model: qwen3:8b
+    intelligence: low
+    context_window: 32768
+    best_for:
+      - handover_update
+      - summary_update
+      - simple_refine
+  local_writer:
+    provider: ollama
+    model: qwen3:14b
+    intelligence: medium
+    context_window: 32768
+    best_for:
+      - scene_generation
+      - chapter_generation
+      - style_refine
+  online_writer:
+    provider: openai
+    model: gpt-5.5
+    intelligence: very_high
+    context_window: 128000
+    best_for:
+      - difficult_rewrite
+      - issue_explanation
+      - final_style_refine
+  online_story_architect:
+    provider: openai
+    model: gpt-5.5
+    intelligence: very_high
+    context_window: 128000
+    best_for:
+      - story_creation
+      - canon_edit
+      - storyline_edit
+      - series_update
+fallback_chains:
+  local_first:
+    - local_writer
+    - local_small
+  local_first_with_online_fallback:
+    - local_writer
+    - online_writer
+  online_allowed:
+    - local_writer
+    - online_writer
+  online_only_high_accuracy:
+    - online_story_architect
+writing_stages:
+  planning:
+    intelligence: medium
+    creativity: medium
+    provider_group: local_first
+  scene_generation:
+    intelligence: medium
+    creativity: high
+    provider_group: local_first
+  chapter_generation:
+    intelligence: high
+    creativity: high
+    provider_group: local_first_with_online_fallback
+  style_refine:
+    intelligence: medium
+    creativity: medium
+    provider_group: local_first
+  review_fix:
+    intelligence: high
+    creativity: medium
+    provider_group: local_first_with_online_fallback
+  issue_explanation:
+    intelligence: high
+    creativity: low
+    provider_group: online_allowed
+  handover_update:
+    intelligence: low
+    creativity: low
+    provider_group: local_first
+review_policy:
+  initial_review:
+    allow_local: true
+  rereview_after_writer_explanation:
+    minimum_intelligence: very_high
+    provider_group: online_only_high_accuracy
+  rereview_after_rewrite:
+    minimum_intelligence: high
+    provider_group: local_first_with_online_fallback
+story_tools:
+  provider_group: online_only_high_accuracy
+  allow_local: false
+  require_review_before_write: true
+privacy:
+  allow_online_for_story_content: true
+  allow_online_for_hidden_canon: false
+  require_confirmation_for_online_hidden_canon: true

@@ -1,0 +1,50 @@
+id: story-id
+title: Untitled Story
+language:
+  primary: en
+  allowed:
+    - en
+  forbidden: []
+series:
+  enabled: false
+  series_id: null
+  series_path: null
+timeline_position:
+  mode: standalone
+  starts_at: null
+  ends_at: null
+  era: null
+  overlaps_with: []
+  canon_visibility:
+    load_events_before_start: true
+    load_events_during_story: true
+    load_events_after_story: false
+paths:
+  instructions: instructions/
+  canon: canon/
+  writer: writer/
+  storyline: storyline/
+  context: context/
+  drafts: drafts/
+  chapters: chapters/
+  summaries: summaries/
+  handover: handover/
+  reviewers: reviewers/
+  reviews: reviews/
+  canon_updates: canon_updates/
+  snapshots: snapshots/
+  runs: runs/
+  state: state/
+  locks: locks/
+  assets: assets/
+  publish: publish/
+writer:
+  profile: writer/writer.md
+reviewers:
+  config: reviewers/reviewer_config.yaml
+  series_reviewers: reviewers/series/
+  special_reviewers: reviewers/special/
+canon_policy:
+  direct_edit_allowed_for_writing_tools: false
+  direct_edit_allowed_for_review_tools: false
+  proposed_updates_path: canon_updates/pending/

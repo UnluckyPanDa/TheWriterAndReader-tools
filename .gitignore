@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# Local config / secrets
+.env
+.env.*
+!.env.example
+config.yaml
+local.config.yaml
+*.secret.yaml
+# Runtime output
+runs/
+snapshots/
+cache/
+tmp/
+.twr/
+# OS
+.DS_Store
+# Do not store story content in tools repo
+stories/
+series/
+workspace.yaml

@@ -1,0 +1,20 @@
+project:
+  name: TheWriterAndReader
+  version: 0.1.0
+paths:
+  cli: cli/
+  tools: tools/
+  shared: shared/
+  skills: .agents/skills/
+defaults:
+  story_template: tools/wizard/templates/story-template/
+  series_template: tools/wizard/templates/series-template/
+  standard_reviewers: tools/review/standard-reviewers/
+  reviewer_templates: tools/review/reviewer-templates/
+  schemas: shared/schemas/
+safety:
+  require_explicit_workspace_path: true
+  require_explicit_story_id: true
+  forbid_cross_story_write: true
+  forbid_direct_canon_write_by_writing_tools: true
+  forbid_direct_series_write_except_merge_tool: true

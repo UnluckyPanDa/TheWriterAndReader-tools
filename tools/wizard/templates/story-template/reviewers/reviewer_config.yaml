@@ -1,0 +1,48 @@
+standard_reviewers:
+  continuity:
+    enabled: true
+    can_block_gate: true
+    provider_group: local_first_with_online_fallback
+    intelligence: high
+  language:
+    enabled: true
+    can_block_gate: true
+    provider_group: local_first
+    intelligence: medium
+  tone:
+    enabled: true
+    can_block_gate: true
+    provider_group: local_first
+    intelligence: medium
+  character:
+    enabled: true
+    can_block_gate: true
+    provider_group: local_first_with_online_fallback
+    intelligence: high
+  pacing:
+    enabled: true
+    can_block_gate: true
+    provider_group: local_first
+    intelligence: medium
+  reveal_lock:
+    enabled: true
+    can_block_gate: true
+    provider_group: local_first_with_online_fallback
+    intelligence: high
+  name_usage:
+    enabled: true
+    can_block_gate: false
+    provider_group: local_first
+    intelligence: medium
+  relationship_addressing:
+    enabled: true
+    can_block_gate: true
+    provider_group: local_first
+    intelligence: medium
+  editor:
+    enabled: true
+    can_block_gate: true
+    provider_group: online_allowed
+    intelligence: high
+series_reviewers: {}
+special_reviewers: {}

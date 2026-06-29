@@ -1,0 +1,35 @@
+story_reviewers:
+  use_default_reviewers: true
+  overrides:
+    continuity:
+      enabled: true
+      extra_focus:
+        - timeline
+        - character knowledge state
+        - name consistency
+    mystery_fairness:
+      enabled: true
+      extra_focus:
+        - clue placement
+        - reader knowledge
+        - premature reveal
+        - impossible deduction
+  custom_reviewers:
+    - id: existence_logic
+      name: "Existence Logic Reviewer"
+      description: "Checks whether metaphysical existence rules remain consistent."
+      profile: "reviewer_profiles/existence_logic.md"
+      enabled: false
+      severity_bias: high
+    - id: movie_director
+      name: "Movie Director Reviewer"
+      description: "Reviews the chapter like a film director, focusing on scene blocking, visual clarity, dramatic rhythm, and emotional performance."
+      profile: "reviewer_profiles/movie_director.md"
+      enabled: false
+      severity_bias: medium
+    - id: influencer_reader
+      name: "Influencer Reader"
+      description: "Reviews the chapter like a social-media fiction influencer, focusing on reader hook, shareable moments, emotional reaction, and serialization appeal."
+      profile: "reviewer_profiles/influencer_reader.md"
+      enabled: false
+      severity_bias: medium

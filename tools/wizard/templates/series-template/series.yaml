@@ -1,0 +1,19 @@
+id: series-id
+title: Untitled Series
+timeline:
+  mode: story_internal
+  master_timeline: timeline.md
+  timeline_states: timeline_states.md
+canon:
+  series_canon: series_canon.md
+  timeline_states: timeline_states.md
+reviewers:
+  config: reviewers/reviewer_config.yaml
+  series_continuity: reviewers/series_continuity/
+inheritance:
+  stories_may_extend_series_canon: true
+  stories_may_override_series_canon: false
+  series_update_requires_approval: true
+canon_update_policy:
+  direct_write_allowed: false
+  approved_updates_required: true

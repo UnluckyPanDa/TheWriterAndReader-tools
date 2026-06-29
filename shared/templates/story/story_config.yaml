@@ -1,0 +1,17 @@
+story:
+  id: "new_story"
+  title: "未命名長篇故事"
+  language: "zh-Hant"
+  genre:
+    - "general fiction"
+  target_audience: ""
+  format: "long-form novel"
+  spoiler_policy:
+    default_allowed_chapter: 999
+    notes: "未明確允許前，不要在早期章節揭露後續真相。"
+workflow:
+  draft_dir: "drafts"
+  chapter_dir: "chapters"
+  review_dir: "reviews"
+  canon_dir: "canon"
+  proposed_canon_update_dir: "proposed_canon_updates"
