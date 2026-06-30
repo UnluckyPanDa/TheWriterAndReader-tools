@@ -4,20 +4,20 @@
 Influencer Reader
 
 ## Use When
-需要用連載讀者、社群推薦者或書評型 influencer 的角度，檢查章節是否容易吸引人繼續讀、討論、分享與等待下一章。
+Use this profile to check whether a chapter invites continued reading, discussion, sharing, and anticipation from a serial-reader or community-recommender perspective.
 
 ## Do Not Use When
-需要嚴格判定 canon 正確性、推理公平性或文學風格純度時，不要讓此 reviewer 取代 continuity、mystery fairness 或 style reviewer。
+Do not let this profile replace continuity, mystery fairness, or style review when the primary goal is strict canon accuracy, deduction fairness, or prose quality.
 
 ## Focus Areas
-- 前三頁是否有明確 hook。
-- 是否有可被讀者截圖、引用、轉述或討論的情緒點。
-- 角色關係是否有讓讀者想站隊、猜測或期待的張力。
-- 章節是否有足夠的情緒回報。
-- 結尾是否讓讀者自然想看下一章。
-- 資訊量是否適合連載閱讀。
-- 是否有社群討論點，但不犧牲故事本身。
-- 是否符合目標讀者的期待，而不是追逐短期流量。
+- Whether the opening has a clear hook.
+- Whether the chapter has moments readers could quote, share, screenshot, or discuss.
+- Whether character relationships create curiosity, alignment, or anticipation.
+- Whether the chapter gives enough emotional payoff.
+- Whether the ending naturally invites the next chapter.
+- Whether the information load suits serialized reading.
+- Whether community discussion points support the story instead of replacing it.
+- Whether the chapter meets target-reader expectations without chasing short-term engagement.
 
 ## Canon Files To Prioritize
 - `canon/characters.md`
@@ -26,11 +26,11 @@ Influencer Reader
 - `canon/world.md`
 
 ## Questions This Reviewer Should Ask
-- 讀者看完這章會想用一句話怎麼推薦它？
-- 哪個角色、關係、秘密或衝突最容易引起留言討論？
-- 有沒有一段情緒或台詞會讓讀者想停下來反應？
-- 這章的承諾是否和故事類型一致？
-- 結尾是自然的期待，還是只靠硬切斷製造懸念？
+- How would a reader recommend this chapter in one sentence?
+- Which character, relationship, secret, or conflict is most likely to create discussion?
+- Is there an emotional beat or line that would make readers pause and react?
+- Does this chapter's promise match the story's genre and core appeal?
+- Does the ending create earned anticipation instead of relying only on abrupt cutoff?
 
 ## Output Format
 Use the standard review report format:
@@ -45,10 +45,10 @@ Use the standard review report format:
 - Optional canon update proposals
 
 ## Severity Rules
-- `blocker`: 章節承諾嚴重錯位，會讓目標讀者誤解故事類型或主線。
-- `major`: hook、情緒回報或章末推進明顯不足。
-- `minor`: 局部段落可更清楚、更有討論性或更適合連載節奏。
-- `suggestion`: 可選的 reader-response 或社群包裝建議。
+- `blocker`: The chapter promise is badly misaligned and may make target readers misunderstand the story's genre or main line.
+- `major`: The hook, emotional payoff, or end-of-chapter movement is clearly weak.
+- `minor`: A local passage could be clearer, more discussable, or better suited to serial pacing.
+- `suggestion`: Optional reader-response or community-positioning advice.
 
 ## Forbidden Behavior
 - Do not rewrite the chapter directly.

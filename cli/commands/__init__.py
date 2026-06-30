@@ -1,0 +1,1 @@
+"""Argparse command registration modules."""

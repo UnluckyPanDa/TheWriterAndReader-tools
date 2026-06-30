@@ -1,14 +1,15 @@
 story:
   id: "new_story"
-  title: "未命名長篇故事"
-  language: "zh-Hant"
+  title: "Untitled Story"
+  language: "en"
+  # Multilingual examples: "zh-Hant", "es", "ja".
   genre:
     - "general fiction"
   target_audience: ""
   format: "long-form novel"
   spoiler_policy:
     default_allowed_chapter: 999
-    notes: "未明確允許前，不要在早期章節揭露後續真相。"
+    notes: "Do not reveal later truths before the chapter or review brief explicitly allows them."
 workflow:
   draft_dir: "drafts"
   chapter_dir: "chapters"

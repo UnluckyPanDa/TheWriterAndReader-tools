@@ -1,11 +1,11 @@
 # Timeline
 
-在此記錄已確認事件的時間順序。
+Record the confirmed order of events.
 
-## Before Chapter 1
+## Before This Chapter
 
-- 尚未建立。
+- Not established yet.
 
 ## Chapter Events
 
-- 尚未建立。
+- Not established yet.

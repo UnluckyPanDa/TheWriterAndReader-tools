@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate a chapter draft using local Ollama model."""
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -51,13 +52,27 @@ def load_draft(story_id: str, chapter_number: int) -> str:
     return ''
 
 
+def story_settings(config: dict) -> dict[str, str]:
+    """Extract reusable story settings from supported config layouts."""
+    story = config.get('story') if isinstance(config.get('story'), dict) else config
+    if not isinstance(story, dict):
+        story = {}
+    return {
+        'title': story.get('title') or 'Untitled Story',
+        'language': story.get('language') or 'en',
+    }
+
+
 def build_generation_prompt(story_id: str, chapter_number: int) -> str:
     """Build the prompt for chapter generation."""
     story_root = resolve_story_root(story_id, REPO_ROOT)
 
     # Load story config
     config = load_yaml(_first_existing([story_root / 'story.yaml', story_root / 'story_config.yaml']))
-    title = config.get('title', '港與航道')
+    settings = story_settings(config)
+    title = settings['title']
+    language = settings['language']
+    heading = chapter_heading(chapter_number, language)
 
     # Load brief
     brief = load_brief(story_id, chapter_number)
@@ -73,50 +88,49 @@ def build_generation_prompt(story_id: str, chapter_number: int) -> str:
         if content:
             canon_text += f'\n### {cf}\n{content}\n'
 
-    # Load existing chapter 1-2 for style reference (abbreviated)
+    # Load prior drafts for style reference (abbreviated)
     ch1 = load_draft(story_id, 1)
     ch2 = load_draft(story_id, 2)
 
     # Build prompt
-    prompt = f"""你是一位繁體中文文學小說作家。你的任務是為長篇小說《{title}》撰寫第 {chapter_number} 章的完整草稿。
+    prompt = f"""You are drafting a reusable fiction chapter for "{title}".
 
-## 風格參考
+Task: write chapter {chapter_number} in {language}.
 
-以下是前兩章的開頭，供你參考文風和敘事語氣：
+## Style Reference
 
-### 第一章開頭（約前80行）
+Use the opening of existing drafts only as a local style reference. Do not copy text.
+
+### Prior Draft Sample A
 {chr(10).join(ch1.split(chr(10))[:80])}
 
-### 第二章開頭（約前60行）
+### Prior Draft Sample B
 {chr(10).join(ch2.split(chr(10))[:60])}
 
-## 故事規範（Canon）
+## Story Reference
 
 {canon_text}
 
-## 第 {chapter_number} 章大綱（Brief）
+## Chapter {chapter_number} Brief
 
 {brief}
 
-## 前一章摘要
+## Previous Chapter Summary
 
-{prev_summary if prev_summary else '（這是第一部早期章節，請根據已有章節脈絡繼續。）'}
+{prev_summary if prev_summary else "No previous chapter summary is available."}
 
-## 寫作要求
+## Draft Requirements
 
-1. 使用繁體中文（zh-Hant）書寫。
-2. 章節長度約 150-250 行，分為 3-5 個場景節。
-3. 每個場景節用 `## 第X節：標題` 格式。
-4. 保持與前兩章一致的文學小說風格：細膩的心理描寫、具體的場景感、情感張力。
-5. 嚴格遵守 Brief 中的 Required Beats 和 Forbidden Spoilers。
-6. 湊的思維方式：問題→分析→判斷→決定。澪的思維方式：感受→情緒→理解→判斷。
-7. 不要使用設定說明（info dump），用場景和對話自然展現。
-8. 章末要有 ending hook，讓讀者想繼續讀下一章。
-9. 不要加入任何元評論或作者註解，只輸出小說正文。
+1. Write in the configured story language: {language}.
+2. Use 3-5 scene sections unless the brief asks otherwise.
+3. Use concrete scene action and dialogue instead of exposition dumps.
+4. Follow Required Beats and Forbidden Spoilers from the brief.
+5. Keep character knowledge limited to what the canon, brief, and prior summary allow.
+6. End with a chapter-level hook when appropriate.
+7. Do not include meta commentary, analysis, or author notes.
+8. Output only the chapter text, starting with this heading:
 
-現在請寫出第 {chapter_number} 章的完整草稿。直接從章節標題開始：
-
-# 第{chapter_number_to_chinese(chapter_number)}章"""
+{heading}"""
 
     return prompt
 
@@ -128,6 +142,20 @@ def chapter_number_to_chinese(n: int) -> str:
     return nums.get(n, str(n))
 
 
+def chapter_heading(chapter_number: int, language: str) -> str:
+    """Return a default chapter heading for the configured story language."""
+    language_key = (language or 'en').lower()
+    if language_key.startswith('zh') or language_key in {'chinese', 'mandarin'}:
+        return f'# 第{chapter_number_to_chinese(chapter_number)}章'
+    return f'# Chapter {chapter_number}'
+
+
+def looks_like_chapter_heading(line: str) -> bool:
+    """Detect common generated chapter headings."""
+    stripped = line.strip()
+    return bool(re.match(r'^#?\s*(Chapter\s+\d+|第.+章)\b', stripped, re.IGNORECASE))
+
+
 def generate_chapter(
     story_id: str,
     chapter_number: int,
@@ -135,6 +163,9 @@ def generate_chapter(
     interactive_model_select: bool = True,
 ) -> str:
     """Generate chapter via Ollama."""
+    story_root = resolve_story_root(story_id, REPO_ROOT)
+    config = load_yaml(_first_existing([story_root / 'story.yaml', story_root / 'story_config.yaml']))
+    heading = chapter_heading(chapter_number, story_settings(config)['language'])
     prompt = build_generation_prompt(story_id, chapter_number)
     print(f'Prompt length: {len(prompt)} chars', flush=True)
 
@@ -158,26 +189,26 @@ def generate_chapter(
     if chapter_text.startswith('# Local Ollama Generation Failed'):
         return chapter_text
 
-    # Clean up: remove any preamble before the chapter title
+    # Clean up: remove any preamble before a recognizable chapter title.
     lines = chapter_text.split('\n')
     start_idx = 0
     for i, line in enumerate(lines):
-        if line.startswith('# 第') or line.startswith('第') and '章' in line[:10]:
+        if looks_like_chapter_heading(line):
             start_idx = i
             break
 
-    chapter_text = '\n'.join(lines[start_idx:])
+    chapter_text = '\n'.join(lines[start_idx:]).strip()
 
-    # Ensure chapter title format
-    ch_cn = chapter_number_to_chinese(chapter_number)
-    if not chapter_text.startswith(f'# 第{ch_cn}章'):
-        # Try to find title in first few lines
-        for i, line in enumerate(lines[:5]):
-            if ch_cn in line and '章' in line:
-                chapter_text = '\n'.join(lines[i:])
+    # Ensure chapter title format matches the configured story language.
+    if not chapter_text.startswith(heading):
+        chapter_lines = chapter_text.split('\n')
+        for i, line in enumerate(chapter_lines[:5]):
+            if looks_like_chapter_heading(line):
+                chapter_lines[i] = heading
+                chapter_text = '\n'.join(chapter_lines[i:]).strip()
                 break
         else:
-            chapter_text = f'# 第{ch_cn}章\n\n{chapter_text}'
+            chapter_text = f'{heading}\n\n{chapter_text}'
 
     return chapter_text
 

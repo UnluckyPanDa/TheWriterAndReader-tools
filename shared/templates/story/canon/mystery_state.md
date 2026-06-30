@@ -1,11 +1,11 @@
 # Mystery / Secret State
 
-在此記錄謎團、線索、誤導、讀者已知資訊、角色已知資訊，以及允許揭露的章節。
+Record mysteries, clues, misdirection, reader knowledge, character knowledge, and allowed reveal points.
 
 ## Active Mysteries
 
-- 尚未建立。
+- Not established yet.
 
 ## Forbidden Spoilers
 
-- 未達允許章節前，不得提前揭露未公開真相。
+- Do not reveal undisclosed truths before the allowed chapter or scene.

@@ -1,11 +1,11 @@
 # World
 
-在此記錄世界觀、社會結構、地理、文化、科技或魔法狀態。
+Record worldbuilding, social structure, geography, culture, technology, magic, or any other setting rules relevant to the story.
 
 ## Established Canon
 
-- 尚未建立。
+- Not established yet.
 
 ## Unknown / To Decide
 
-- 尚未決定。
+- Not decided yet.

@@ -1,170 +1,138 @@
+"""Build compact writing context packs for workspace stories."""
+
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
+from typing import Any
+
+from shared.lib.safe_write import safe_write_file
+from shared.lib.series_loader import load_series_pack
+from shared.lib.story_loader import (
+    load_markdown_file,
+    load_story_canon_file,
+    load_story_context_file,
+    load_story_yaml,
+    load_storyline_file,
+)
+from shared.lib.workspace_loader import resolve_series_path, resolve_story_path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+def _value_as_text(value: Any) -> str:
+    if isinstance(value, dict):
+        return ", ".join(f"{key}: {_value_as_text(item)}" for key, item in value.items())
+    if isinstance(value, list):
+        return ", ".join(_value_as_text(item) for item in value)
+    return str(value)
 
 
-def read_text_if_exists(path: Path, default: str = "") -> str:
-    return path.read_text(encoding="utf-8") if path.exists() else default
+def _metadata_block(story_yaml: dict[str, Any]) -> str:
+    if not story_yaml:
+        return "- No story metadata found."
+    return "\n".join(f"- {key}: {_value_as_text(value)}" for key, value in sorted(story_yaml.items()))
 
 
-def _first_existing(paths: list[Path]) -> Path | None:
-    for path in paths:
-        if path.exists():
-            return path
-    return None
+def _non_empty(text: str, label: str) -> str:
+    stripped = text.strip()
+    if stripped:
+        return stripped
+    return f"No {label} content was found. Add this before production drafting."
 
 
-def resolve_story_root(story: str | Path, repo_root: Path = REPO_ROOT) -> Path:
-    story_path = Path(story).expanduser()
-    stories_root = (repo_root / "stories").resolve(strict=False)
-    if story_path.is_absolute():
-        candidate = story_path.resolve(strict=False)
-    elif len(story_path.parts) > 1:
-        candidate = (repo_root / story_path).resolve(strict=False)
-    else:
-        candidate = (stories_root / story_path).resolve(strict=False)
-
-    try:
-        candidate.relative_to(stories_root)
-    except ValueError as exc:
-        raise ValueError(f"Story path must stay under {stories_root}: {story}") from exc
-    return candidate
-
-
-def assert_write_inside_story_root(path: Path, story_root: Path) -> None:
-    resolved_path = path.resolve(strict=False)
-    resolved_root = story_root.resolve(strict=False)
-    try:
-        resolved_path.relative_to(resolved_root)
-    except ValueError as exc:
-        raise ValueError(f"Refusing to write outside story root {resolved_root}: {resolved_path}") from exc
+def _series_ids(story_yaml: dict[str, Any]) -> list[str]:
+    raw_series = story_yaml.get("series") or story_yaml.get("series_id")
+    if raw_series is None:
+        return []
+    if isinstance(raw_series, str):
+        return [raw_series]
+    if isinstance(raw_series, dict):
+        series_id = raw_series.get("id") or raw_series.get("series_id")
+        return [str(series_id)] if series_id else []
+    if isinstance(raw_series, list):
+        ids: list[str] = []
+        for item in raw_series:
+            if isinstance(item, str):
+                ids.append(item)
+            elif isinstance(item, dict):
+                series_id = item.get("id") or item.get("series_id")
+                if series_id:
+                    ids.append(str(series_id))
+        return ids
+    return []
 
 
-def story_dir(story_id: str, repo_root: Path = REPO_ROOT) -> Path:
-    return resolve_story_root(story_id, repo_root)
+def _load_series_context(workspace_path: str | Path, story_yaml: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for series_id in _series_ids(story_yaml):
+        series_path = resolve_series_path(workspace_path, series_id)
+        series_pack = load_series_pack(series_path)
+        parts.append(f"### Series {series_id}\n{_non_empty(series_pack, 'series pack')}")
+    return "\n\n".join(parts) if parts else "No series context is configured for this story."
 
 
-def build_context_packet(story_id: str, chapter_number: int, repo_root: Path = REPO_ROOT) -> Path:
-    base = story_dir(story_id, repo_root)
-    if not base.exists():
-        raise FileNotFoundError(f"Story not found: {story_id}")
+def build_write_pack(
+    workspace_path: str,
+    story_id: str,
+    chapter: int,
+    options: dict[str, Any] | None = None,
+) -> Path:
+    """Build and write ``context/write_pack.md`` for a story chapter."""
+    del options
+    story_path = resolve_story_path(workspace_path, story_id)
+    story_yaml = load_story_yaml(story_path)
 
-    chapter = f"{chapter_number:03d}"
-    previous = f"{chapter_number - 1:03d}"
-    summaries_dir = base / "summaries"
-    assert_write_inside_story_root(summaries_dir, base)
-    summaries_dir.mkdir(parents=True, exist_ok=True)
+    writer_voice = load_markdown_file(story_path / "writer" / "writer.md")
+    canon = load_story_canon_file(story_path, "canon.md")
+    characters = load_story_canon_file(story_path, "characters.md")
+    relationships = load_story_canon_file(story_path, "relationships_and_names.md")
+    locations = load_story_canon_file(story_path, "locations_objects.md")
+    chapter_plan = load_storyline_file(story_path, "chapter_plan.md")
+    reveal_lock = load_storyline_file(story_path, "reveal_lock.md")
+    handover = load_story_context_file(story_path, "handover.md")
+    series_context = _load_series_context(workspace_path, story_yaml)
 
-    story_config_path = _first_existing([base / "story.yaml", base / "story_config.yaml"])
-    story_config = (
-        read_text_if_exists(story_config_path, "(missing story.yaml or story_config.yaml)")
-        if story_config_path
-        else "(missing story.yaml or story_config.yaml)"
-    )
-    canon_dir = base / "canon"
-    world = read_text_if_exists(canon_dir / "world.md", "(missing world.md)")
-    rules = read_text_if_exists(canon_dir / "rules.md", "(missing rules.md)")
-    characters = read_text_if_exists(canon_dir / "characters.md", "(missing characters.md)")
-    timeline = read_text_if_exists(canon_dir / "timeline.md", "(missing timeline.md)")
-    mystery = read_text_if_exists(canon_dir / "mystery_state.md", "(missing mystery_state.md)")
+    content = f"""# Write Pack
 
-    previous_summary_path = _first_existing(
-        [
-            summaries_dir / f"chapter_{previous}.md",
-            summaries_dir / f"summary_chapter_{previous}.md",
-            summaries_dir / f"chapter_{chapter_number - 1}.md",
-            summaries_dir / f"summary_chapter_{chapter_number - 1}.md",
-        ]
-    )
-    if previous_summary_path:
-        previous_summary = read_text_if_exists(previous_summary_path)
-    elif chapter_number <= 1:
-        previous_summary = "First chapter: no previous chapter summary needed."
-    else:
-        previous_summary = (
-            f"WARNING: previous summary not found for chapter {chapter_number - 1}. "
-            "Using canon and current chapter brief only."
-        )
+## Story Metadata
+{_metadata_block(story_yaml)}
 
-    brief_path = _first_existing(
-        [
-            summaries_dir / f"chapter_{chapter}_brief.md",
-            base / "chapters" / f"chapter_{chapter}_brief.md",
-            base / "chapters" / f"chapter_{chapter}.md",
-        ]
-    )
-    brief = read_text_if_exists(brief_path, "(missing current chapter brief)") if brief_path else "(missing current chapter brief)"
+## Writer Voice
+{_non_empty(writer_voice, "writer voice")}
 
-    output = summaries_dir / f"context_chapter_{chapter_number}.md"
-    assert_write_inside_story_root(output, base)
-    packet = f"""# Context Packet
+## Current Task
+- Story ID: {story_id}
+- Chapter: {chapter}
+- Use the chapter plan to identify the requested scene or chapter material.
 
-## Story
+## Active Canon
+{_non_empty(canon, "canon")}
 
-```yaml
-{story_config.strip()}
-```
+## Active Characters
+{_non_empty(characters, "character")}
 
-## Target Chapter
+## Relationship and Name Rules
+{_non_empty(relationships, "relationship and name rule")}
 
-Chapter {chapter_number}
+## Active Locations and Objects
+{_non_empty(locations, "location and object")}
 
-## Relevant Canon
+## Chapter Plan and Pacing
+{_non_empty(chapter_plan, "chapter plan")}
 
-### World
+## Reveal Lock
+{_non_empty(reveal_lock, "reveal lock")}
 
-{world.strip()}
+## Previous Context and Handover
+{_non_empty(handover, "handover")}
 
-### Rules
+## Series Context
+{series_context}
 
-{rules.strip()}
-
-## Character State
-
-{characters.strip()}
-
-## Timeline State
-
-{timeline.strip()}
-
-## Mystery / Secret State
-
-{mystery.strip()}
-
-## Previous Chapter Summary
-
-{previous_summary.strip()}
-
-## Current Chapter Brief
-
-{brief.strip()}
-
-## Forbidden Spoilers
-
-- Do not reveal twists or secrets before this chapter's allowed reveal point.
-- Use `mystery_state.md` as hidden-state guidance, not as prose to expose.
-
-## Open Questions
-
-- Flag missing canon, missing summaries, or unclear character knowledge instead of inventing facts.
+## Output Requirements
+- Follow the story language exactly.
+- Follow the writer voice and current canon.
+- Do not reveal locked information.
+- Do not make canon changes from the writing tool.
+- Output prose suitable for review, not notes for the reviewer.
 """
-    output.write_text(packet, encoding="utf-8")
-    return output
 
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Build a chapter context packet.")
-    parser.add_argument("--story", required=True)
-    parser.add_argument("--chapter", required=True, type=int)
-    args = parser.parse_args()
-    output = build_context_packet(args.story, args.chapter)
-    print(output)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    return safe_write_file(story_path / "context" / "write_pack.md", content, story_path)

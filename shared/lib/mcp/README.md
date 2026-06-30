@@ -1,42 +1,42 @@
-# MCP 伺服器（選用）
+# MCP Server (Optional)
 
-這個目錄提供一個本機 MCP server，讓 Codex App 或其他支援 MCP 的工具呼叫小說工作台功能。CLI 腳本仍是主要入口，MCP 只是包一層工具介面。
+This directory provides a local MCP server so Codex App or other MCP-capable tools can call the story workbench. The CLI scripts remain the primary entry points; MCP only wraps them as tool calls.
 
-## 安全規則
+## Safety Rules
 
-- MCP 工具不會直接覆寫 `stories/<story_id>/canon/`。
-- 任何 canon 變更都必須先寫入 `stories/<story_id>/proposed_canon_updates/`。
-- `accept-canon-update` 仍需要明確命令，不會自動套用模型建議。
-- `write_chapter_draft` 只寫入 `drafts/`，若檔案已存在會建立帶時間戳的新草稿。
+- MCP tools do not directly overwrite `stories/<story_id>/canon/`.
+- Canon changes must first be written to `stories/<story_id>/proposed_canon_updates/`.
+- `accept-canon-update` still requires an explicit command and never auto-applies model suggestions.
+- `write_chapter_draft` writes only to `drafts/`; if the file already exists, it creates a timestamped draft.
 
-## 安裝 MCP 依賴
+## Install MCP Dependencies
 
-`requirements.txt` 不強制安裝 MCP，避免因套件命名或版本變動讓基本安裝失敗。若你要啟用 MCP，可以在本機虛擬環境內另外安裝：
+`requirements.txt` does not force MCP installation, so baseline setup is not blocked by package naming or version changes. To enable MCP, install it in the local virtual environment:
 
 ```bash
 python -m pip install mcp
 ```
 
-若安裝後仍無法啟動，請先使用 CLI：
+If MCP still does not start after installation, use the CLI first:
 
 ```bash
 python scripts/novel.py doctor
 python scripts/novel.py review --story _example --chapter 1
 ```
 
-## Codex App 設定範例
+## Codex App Configuration Example
 
-請手動把以下片段加入 Codex App 使用的設定檔。不要讓本專案自動修改你的全域 `~/.codex/config.toml`。
+Manually add a snippet like this to the config file used by Codex App. Do not let this project automatically modify global `~/.codex/config.toml`.
 
 ```toml
-[mcp_servers.novel_ai_workbench]
-command = "/Volumes/SN7100/Projects/TheWriterAndReader/.venv/bin/python"
-args = ["/Volumes/SN7100/Projects/TheWriterAndReader/mcp/novel_mcp_server.py"]
+[mcp_servers.story_workbench]
+command = "/path/to/project/.venv/bin/python"
+args = ["/path/to/project/shared/lib/mcp/novel_mcp_server.py"]
 ```
 
-若你不用 `.venv`，把 `command` 換成你要使用的 Python 路徑。
+If you do not use `.venv`, replace `command` with the Python path you want to use.
 
-## 可用工具
+## Available Tools
 
 - `list_stories()`
 - `init_story(story_id)`

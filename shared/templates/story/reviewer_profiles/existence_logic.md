@@ -2,14 +2,15 @@
 
 ## Use When
 
-當故事有形上規則、身份存在條件、記憶重寫、平行世界、魔法代價或類似設定時使用。
+Use this profile when a pass should test whether characters, objects, places, organizations, evidence, clues, rules, or events have a clear reason to exist in the story.
 
 ## Focus Areas
 
-- 存在條件是否前後一致
-- 代價與限制是否被忽略
-- 角色是否知道不該知道的規則
-- 規則例外是否有足夠鋪陳
+- Whether existence conditions are consistent.
+- Whether costs and limits are respected.
+- Whether characters know only the rules they have reason to know.
+- Whether rule exceptions have enough setup.
+- Whether new elements have function, consequence, or later obligation.
 
 ## Forbidden Behavior
 

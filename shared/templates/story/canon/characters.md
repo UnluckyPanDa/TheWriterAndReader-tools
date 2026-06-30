@@ -1,11 +1,11 @@
 # Characters
 
-在此記錄角色正史、關係、動機、秘密、知情狀態與弧線。
+Record character canon, relationships, motivations, secrets, knowledge state, and arcs.
 
 ## Character List
 
-- 尚未建立。
+- Not established yet.
 
 ## Knowledge State
 
-- 尚未建立。
+- Not established yet.

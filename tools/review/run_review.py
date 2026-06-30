@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -24,7 +25,6 @@ if str(ROOT) not in sys.path:
 from scripts.build_context import assert_write_inside_story_root, resolve_story_root
 
 
-STORY_ROOT = resolve_story_root("story-1", ROOT)
 MODEL = os.environ.get("LOCAL_REVIEW_MODEL", "gemma4:12b")
 OLLAMA_URL = os.environ.get("LOCAL_REVIEW_OLLAMA_URL", "http://localhost:11434/api/generate")
 OLLAMA_SHOW_URL = os.environ.get(
@@ -50,12 +50,12 @@ REQUESTED_REVIEWERS = [
 
 
 REVIEWERS = {
-    "continuity": "檢查章節是否違反既有 canon、時間線、身份規則、角色已知資訊。優先指出矛盾與不確定處。",
-    "character_arc": "檢查湊/澪/詩織/孩子/同學的情緒與行為是否符合目前章節可知狀態，尤其湊與澪的思考差異。",
-    "pacing": "檢查章節節奏、場景轉換、資訊密度、結尾鉤子是否支撐第一章功能。",
-    "style": "檢查商業小說可讀性、敘事語氣、重複、抽象說明過多、語句不順或生成痕跡。",
-    "mystery_fairness": "檢查是否過早透露鏡庭、十六年前、真希真相、九條能力、世界修補機制等未到章節的謎底。",
-    "movie_director": "以電影導演角度檢查視覺清晰度、場面調度、情緒節拍、轉場、演員可表演的具體動作。",
+    "continuity": "Check for conflicts with canon, timeline, identity rules, and character knowledge. Prioritize contradictions and uncertain points.",
+    "character_arc": "Check whether character emotion, motivation, and behavior match the current story state.",
+    "pacing": "Check chapter rhythm, scene transitions, information density, and whether the ending supports the chapter function.",
+    "style": "Check readability, narrative voice consistency, repetition, over-explaining, awkward phrasing, or generated-text artifacts.",
+    "mystery_fairness": "Check whether hidden facts, clues, or reveals are disclosed earlier than the brief or canon allows.",
+    "movie_director": "Check visual clarity, staging, emotional beats, transitions, and concrete performable action.",
 }
 
 
@@ -74,8 +74,8 @@ def hard_timeout(seconds: int):
         signal.signal(signal.SIGALRM, previous)
 
 
-def read(path: str) -> str:
-    return (STORY_ROOT / path).read_text(encoding="utf-8")
+def read(story_root: Path, path: str) -> str:
+    return (story_root / path).read_text(encoding="utf-8")
 
 
 def _clean_cli_output(output: str) -> str:
@@ -250,20 +250,23 @@ def make_draft_extract(draft: str) -> str:
         section_samples.append("\n".join(lines[start : start + SECTION_SAMPLE_LINES]))
 
     risk_terms = [
-        "修補",
-        "世界的規則",
-        "保護",
-        "九條",
-        "真希",
-        "鏡",
-        "十六",
-        "疾病",
-        "神經",
-        "詩織",
-        "心春",
-        "悠",
-        "數學",
-        "作業",
+        "secret",
+        "truth",
+        "revealed",
+        "forbidden",
+        "prophecy",
+        "memory",
+        "identity",
+        "timeline",
+        "rule",
+        "power",
+        "betrayal",
+        "真相",
+        "秘密",
+        "規則",
+        "記憶",
+        "secreto",
+        "verdad",
     ]
     risk_lines = [
         f"{index + 1}: {line}"
@@ -271,24 +274,24 @@ def make_draft_extract(draft: str) -> str:
         if any(term in line for term in risk_terms)
     ]
     return (
-        "[章節抽樣]\n"
+        "[Chapter Samples]\n"
         + "\n\n".join(section_samples)
-        + "\n\n[需審查的風險句]\n"
+        + "\n\n[Lines Matching Generic Risk Terms]\n"
         + "\n".join(risk_lines[:RISK_LINE_LIMIT])
     )
 
 
 def review_prompt(name: str, focus: str, canon: str, brief: str, draft_extract: str) -> str:
     if ULTRA_MINIMAL_PROMPT:
-        return f"""只輸出審稿結論，不要前言，不要思考過程，不要空白。
-格式固定為四行：
+        return f"""Output only the review result. Do not include preamble, hidden reasoning, or blank lines.
+Use exactly four lines:
 # {name} Review
 Verdict: pass|needs_revision|blocked
-Issue: severity=none|minor|major|blocker; reason=一句話; task=一句話
-Risk: 一句話
+Issue: severity=none|minor|major|blocker; reason=one sentence; task=one sentence
+Risk: one sentence
 
-你是本地小說 reviewer。不可改寫章節，不可新增 canon；只根據材料判斷，不確定就寫「不確定」。
-審閱重點: {focus}
+You are a local fiction reviewer. Do not rewrite the chapter and do not add canon. Judge only from the supplied materials. Mark uncertainty explicitly.
+Review focus: {focus}
 
 [BRIEF]
 {brief[:900]}
@@ -301,12 +304,13 @@ Risk: 一句話
 """
 
     if MINIMAL_PROMPT:
-        return f"""本地小說 reviewer。不可改寫章節，不可新增 canon；只根據材料判斷，不確定就寫「不確定」。
+        return f"""You are a local fiction reviewer. Do not rewrite the chapter and do not add canon. Judge only from the supplied materials. Mark uncertainty explicitly.
 
 Reviewer: {name}
-重點: {focus}
+Focus: {focus}
 
-輸出繁體中文，最多 220 字，格式：
+Output in the story's configured language when clear from the materials; otherwise use English.
+Keep the review under 220 words and use this format:
 # {name} Review
 ## Verdict
 ## Issues
@@ -325,13 +329,13 @@ Reviewer: {name}
 {draft_extract}
 """
 
-    return f"""你是本地小說 reviewer，不可改寫章節，不可新增 canon。
-請用繁體中文審閱第一章草稿。只根據下列 canon/brief/草稿判斷；不確定就標記不確定。
+    return f"""You are a local fiction reviewer. Do not rewrite the chapter and do not add canon.
+Judge only from the canon, brief, and draft extract below. Mark uncertainty explicitly.
 
 Reviewer: {name}
-審閱重點: {focus}
+Review focus: {focus}
 
-必要輸出格式：
+Use this output format:
 # {name} Review
 ## Summary
 ## Strengths
@@ -345,8 +349,8 @@ Reviewer: {name}
 ## Revision Tasks
 ## Optional Canon Update Proposals
 
-請控制在 600 字以內，只列最高風險；每個 Issues 最多 3 條。
-你看到的是章節抽樣與風險句，不是全文；若需要全文才能確認，請標記「不確定」。
+Keep the review under 600 words and list only the highest risks. Limit Issues to three items.
+You are seeing chapter samples and risk-term lines, not the full draft. If the full draft is needed to confirm something, mark it as uncertain.
 
 [CANON]
 {canon}
@@ -359,25 +363,43 @@ Reviewer: {name}
 """
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run local chapter reviewers for a story.")
+    parser.add_argument("chapter_number", nargs="?", type=int, help="Chapter number.")
+    parser.add_argument(
+        "--story",
+        default=os.environ.get("LOCAL_REVIEW_STORY"),
+        help="Story id or path. Defaults to LOCAL_REVIEW_STORY.",
+    )
+    parser.add_argument("--chapter", dest="chapter_option", type=int, help="Chapter number.")
+    args = parser.parse_args()
+    args.chapter_number = args.chapter_option or args.chapter_number
+    if not args.story:
+        parser.error("--story is required unless LOCAL_REVIEW_STORY is set")
+    if args.chapter_number is None:
+        parser.error("chapter number is required")
+    return args
+
+
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: local_chapter_review.py <chapter_number>", file=sys.stderr)
-        return 2
-    chapter = int(sys.argv[1])
+    args = parse_args()
+    chapter = args.chapter_number
+    story_root = resolve_story_root(args.story, ROOT)
+    canon_files = [
+        "canon/world.md",
+        "canon/rules.md",
+        "canon/characters.md",
+        "canon/mystery_state.md",
+    ]
     canon = "\n\n".join(
-        [
-            read("canon/world.md"),
-            read("canon/rules.md"),
-            read("canon/characters.md"),
-            read("canon/mystery_state.md"),
-        ]
+        read(story_root, path) for path in canon_files if (story_root / path).exists()
     )
     canon = canon[:CANON_CHARS]
-    brief = read(f"summaries/chapter_{chapter:03d}_brief.md")
-    draft = read(f"drafts/chapter_{chapter:03d}.md")
+    brief = read(story_root, f"summaries/chapter_{chapter:03d}_brief.md")
+    draft = read(story_root, f"drafts/chapter_{chapter:03d}.md")
     draft_extract = make_draft_extract(draft)
-    out_dir = STORY_ROOT / "reviews" / f"chapter_{chapter}"
-    assert_write_inside_story_root(out_dir, STORY_ROOT)
+    out_dir = story_root / "reviews" / f"chapter_{chapter:03d}"
+    assert_write_inside_story_root(out_dir, story_root)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     current_outputs = {}
@@ -401,7 +423,7 @@ def main() -> int:
             output = f"# {name} Review\n\nERROR: local model returned an empty response."
             failed = True
         out_path = out_dir / f"{name}.md"
-        assert_write_inside_story_root(out_path, STORY_ROOT)
+        assert_write_inside_story_root(out_path, story_root)
         out_path.write_text(output + "\n", encoding="utf-8")
         current_outputs[name] = output
 
@@ -415,7 +437,7 @@ def main() -> int:
             combined_parts.append(existing_path.read_text(encoding="utf-8").strip())
     combined = "\n\n---\n\n".join(combined_parts) + "\n"
     combined_path = out_dir / "combined_review.md"
-    assert_write_inside_story_root(combined_path, STORY_ROOT)
+    assert_write_inside_story_root(combined_path, story_root)
     combined_path.write_text(combined, encoding="utf-8")
     print(f"wrote {combined_path}")
     return 1 if failed else 0

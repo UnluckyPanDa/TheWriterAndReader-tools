@@ -1,10 +1,148 @@
-"""Model routing skeleton."""
+"""Select and run configured model providers."""
 
 from __future__ import annotations
 
+from typing import Any
 
-class ModelRouter:
-    """Placeholder router that will be implemented later."""
+from shared.lib.config_loader import resolve_model_profile
+from shared.lib.local_cli_runner import run_local_cli_model
+from shared.lib.online_api_runner import run_online_api_model
 
-    def __init__(self, config: dict | None = None) -> None:
-        self.config = config or {}
+
+def get_fallback_chain(config: dict[str, Any], provider_group: str) -> list[dict[str, Any]]:
+    """Resolve a provider group into ordered model profile dictionaries."""
+    fallback_chains = config.get("fallback_chains", {})
+    if provider_group not in fallback_chains:
+        raise ValueError(f"Unknown provider group: {provider_group}")
+    profile_names = fallback_chains[provider_group]
+    if not isinstance(profile_names, list) or not profile_names:
+        raise ValueError(f"Provider group '{provider_group}' must contain at least one profile")
+
+    chain: list[dict[str, Any]] = []
+    for profile_name in profile_names:
+        profile = resolve_model_profile(config, str(profile_name))
+        provider_name = profile.get("provider")
+        provider_config = config.get("providers", {}).get(provider_name)
+        if not isinstance(provider_config, dict):
+            raise ValueError(f"Model profile '{profile_name}' references unknown provider '{provider_name}'")
+        chain.append(
+            {
+                "profile_name": str(profile_name),
+                "provider": provider_name,
+                "provider_config": provider_config,
+                **profile,
+            }
+        )
+    return chain
+
+
+def select_model_for_stage(config: dict[str, Any], stage_name: str) -> list[dict[str, Any]]:
+    """Select the fallback model chain for a writing stage."""
+    stages = config.get("writing_stages", {})
+    stage = stages.get(stage_name)
+    if not isinstance(stage, dict):
+        raise ValueError(f"Unknown writing stage: {stage_name}")
+    provider_group = stage.get("provider_group")
+    if not isinstance(provider_group, str):
+        raise ValueError(f"Writing stage '{stage_name}' is missing provider_group")
+    return get_fallback_chain(config, provider_group)
+
+
+def select_model_for_reviewer(config: dict[str, Any], reviewer_config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Select the fallback model chain for a reviewer definition."""
+    provider_group = reviewer_config.get("provider_group")
+    if not isinstance(provider_group, str):
+        provider_group = config.get("review_policy", {}).get("provider_group", "local_first")
+    return get_fallback_chain(config, provider_group)
+
+
+def select_model_for_story_wizard(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Select the fallback model chain for story wizard tools."""
+    provider_group = config.get("story_tools", {}).get("provider_group")
+    if not isinstance(provider_group, str):
+        raise ValueError("story_tools.provider_group is missing from config")
+    return get_fallback_chain(config, provider_group)
+
+
+def attempt_model_chain(
+    prompt: str,
+    model_chain: list[dict[str, Any]],
+    config: dict[str, Any],
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Attempt a prompt against a model chain until one provider succeeds."""
+    del config
+    options = options or {}
+    attempts: list[dict[str, Any]] = []
+
+    for model_profile in model_chain:
+        profile_name = str(model_profile.get("profile_name", model_profile.get("model", "unknown")))
+        provider_name = str(model_profile.get("provider", ""))
+        provider_config = model_profile.get("provider_config", {})
+        provider_type = provider_config.get("type") if isinstance(provider_config, dict) else None
+
+        if provider_type == "mock" or provider_name == "mock":
+            result = {"ok": True, "text": _mock_response(prompt), "reason": None}
+        elif provider_type == "local_cli":
+            result = run_local_cli_model(provider_config, model_profile, prompt, options)
+        elif provider_type == "online_openai_compatible":
+            result = run_online_api_model(provider_config, model_profile, prompt, options)
+        else:
+            result = {"ok": False, "text": "", "reason": f"unsupported_provider_type: {provider_type}"}
+
+        attempts.append(
+            {
+                "model_profile": profile_name,
+                "provider": provider_name,
+                "status": "success" if result.get("ok") else "failed",
+                "reason": result.get("reason"),
+            }
+        )
+        if result.get("ok"):
+            return {
+                "ok": True,
+                "text": str(result.get("text", "")),
+                "model_profile": profile_name,
+                "attempts": attempts,
+            }
+
+    return {"ok": False, "text": "", "model_profile": None, "attempts": attempts}
+
+
+def _mock_response(prompt: str) -> str:
+    """Return deterministic text for tests and offline development."""
+    lower = prompt.lower()
+    if "review report" in lower or "reviewer" in lower or "review pack" in lower:
+        return """# Review Report
+reviewer_id: mock_reviewer
+reviewer_type: mock
+story_id: story-1
+chapter: 1
+draft_file: mock
+status: pass
+## Summary
+The draft is coherent for the provided context.
+## Severity Counts
+- blocker: 0
+- major: 0
+- minor: 0
+- note: 0
+## Issues
+## Rewrite Recommendation
+rewrite_required: no
+rewrite_scope: none
+## Gate Recommendation
+gate_status: accept
+## Carry-Forward Tasks
+None.
+## Reviewer Notes
+Mock review completed."""
+    if "draft" in lower or "write the requested chapter" in lower or "chapter" in lower:
+        return (
+            "The morning opened with a quiet decision. The protagonist stepped into the "
+            "scene carrying yesterday's doubts, but chose action over hesitation. By the "
+            "end, the immediate goal was reached while a larger question remained."
+        )
+    if "pack" in lower:
+        return "Mock model response for context pack request."
+    return "Mock model response."

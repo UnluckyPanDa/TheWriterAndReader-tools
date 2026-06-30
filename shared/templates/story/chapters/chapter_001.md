@@ -2,18 +2,18 @@
 
 ## Purpose
 
-- 說明本章在整體故事中的功能。
+- State this chapter's function in the larger story.
 
 ## Required Beats
 
-- 開場狀態：
-- 轉折：
-- 結尾鉤子：
+- Opening state:
+- Turn:
+- Ending hook:
 
 ## Canon To Use
 
-- 只使用 `canon/` 中已確認的資訊。
+- Use only information already confirmed in `canon/`.
 
 ## Forbidden Spoilers
 
-- 不揭露尚未允許的後續真相。
+- Do not reveal future truths before they are allowed.

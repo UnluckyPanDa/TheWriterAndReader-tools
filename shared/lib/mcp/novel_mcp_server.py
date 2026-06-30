@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional local MCP server for the novel AI workbench.
+"""Optional local MCP server for the story writing workbench.
 
 The server keeps canon writes behind proposal files. It is intentionally thin:
 the command-line scripts remain the source of truth for local behavior.
@@ -118,13 +118,13 @@ def write_chapter_draft(
             raise FileNotFoundError(f"Brief file not found: {brief_path}")
         extra_brief = "\n\n# Extra Brief\n" + brief_path.read_text(encoding="utf-8")
 
-    prompt = f"""你是本機長篇小說寫作模型。請只根據下列章節脈絡撰寫草稿。
+    prompt = f"""You are the local story drafting model. Write a chapter draft using only the context below.
 
-規則：
-- 不要修改或新增 canon 檔案。
-- 不要提前揭露 Forbidden Spoilers。
-- 若 canon 不足，請在草稿末尾列出需要作者決定的問題。
-- 請輸出章節草稿，不要輸出評論。
+Rules:
+- Do not modify or create canon files.
+- Do not reveal forbidden spoilers early.
+- If canon is insufficient, list author-decision questions at the end of the draft.
+- Output the chapter draft, not review commentary.
 
 {context_text}{extra_brief}
 """
