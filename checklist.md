@@ -9,7 +9,7 @@
 - [x] Implement safe write and path rule helpers.
 - [x] Implement model router and provider runners.
 - [x] Implement write pack builder.
-- [ ] Implement draft generation.
+- [x] Implement draft generation.
 - [ ] Implement review pack, reviewer runner, review combiner, and review gate.
 - [ ] Implement publish pack builder.
 - [ ] Wire argparse CLI commands.
@@ -22,4 +22,4 @@
 
 ## Next File To Do
 
-`tools/writing/generate_draft.py`
+`tools/review/build_review_pack.py`
