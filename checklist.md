@@ -10,7 +10,7 @@
 - [x] Implement model router and provider runners.
 - [x] Implement write pack builder.
 - [x] Implement draft generation.
-- [ ] Implement review pack, reviewer runner, review combiner, and review gate.
+- [x] Implement review pack, reviewer runner, review combiner, and review gate.
 - [ ] Implement publish pack builder.
 - [ ] Wire argparse CLI commands.
 - [ ] Fill non-empty prompt templates.
@@ -22,4 +22,4 @@
 
 ## Next File To Do
 
-`tools/review/build_review_pack.py`
+`tools/publish/build_publish_pack.py`

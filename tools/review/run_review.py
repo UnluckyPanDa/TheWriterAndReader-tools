@@ -1,446 +1,187 @@
-#!/usr/bin/env python3
-"""Run chapter reviewers through local Ollama using only the stdlib."""
+"""Run configured story reviewers and produce a review gate."""
 
 from __future__ import annotations
 
 import argparse
-import json
-import os
-import re
-import signal
-import subprocess
-import sys
-import time
-import urllib.request
-from socket import timeout as SocketTimeout
-from contextlib import contextmanager
 from pathlib import Path
-from urllib.error import URLError
+from typing import Any
+
+import yaml
+
+from shared.lib.config_loader import load_config
+from shared.lib.model_router import attempt_model_chain, get_fallback_chain, select_model_for_reviewer
+from shared.lib.path_rules import assert_story_write_allowed
+from shared.lib.review_parser import count_severities, recommended_gate_status
+from shared.lib.safe_write import safe_write_file
+from shared.lib.story_loader import load_markdown_file, load_story_context_file
+from shared.lib.workspace_loader import resolve_story_path
+from tools.review.build_review_pack import build_review_pack
 
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from scripts.build_context import assert_write_inside_story_root, resolve_story_root
+REVIEWER_ROOT = Path(__file__).resolve().parent / "standard-reviewers"
 
 
-MODEL = os.environ.get("LOCAL_REVIEW_MODEL", "gemma4:12b")
-OLLAMA_URL = os.environ.get("LOCAL_REVIEW_OLLAMA_URL", "http://localhost:11434/api/generate")
-OLLAMA_SHOW_URL = os.environ.get(
-    "LOCAL_REVIEW_OLLAMA_SHOW_URL",
-    OLLAMA_URL.split("/api/", 1)[0].rstrip("/") + "/api/show",
-)
-REQUEST_TIMEOUT = int(os.environ.get("LOCAL_REVIEW_TIMEOUT", "900"))
-CONTEXT_PROBE_TIMEOUT = int(os.environ.get("LOCAL_REVIEW_CONTEXT_PROBE_TIMEOUT", "30"))
-MAX_RESPONSE_CHARS = int(os.environ.get("LOCAL_REVIEW_MAX_CHARS", "1800"))
-NUM_PREDICT = int(os.environ.get("LOCAL_REVIEW_NUM_PREDICT", "700"))
-NUM_CTX = int(os.environ.get("LOCAL_REVIEW_NUM_CTX", "32768"))
-CANON_CHARS = int(os.environ.get("LOCAL_REVIEW_CANON_CHARS", "6500"))
-SECTION_SAMPLE_LINES = int(os.environ.get("LOCAL_REVIEW_SECTION_LINES", "8"))
-RISK_LINE_LIMIT = int(os.environ.get("LOCAL_REVIEW_RISK_LINES", "25"))
-MINIMAL_PROMPT = os.environ.get("LOCAL_REVIEW_MINIMAL", "") == "1"
-ULTRA_MINIMAL_PROMPT = os.environ.get("LOCAL_REVIEW_ULTRA_MINIMAL", "") == "1"
-STREAM_RESPONSE = os.environ.get("LOCAL_REVIEW_STREAM", "1") != "0"
-REQUESTED_REVIEWERS = [
-    name.strip()
-    for name in os.environ.get("LOCAL_REVIEWERS", "").split(",")
-    if name.strip()
-]
+def _load_yaml_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"YAML file must contain a mapping: {path}")
+    return data
 
 
-REVIEWERS = {
-    "continuity": "Check for conflicts with canon, timeline, identity rules, and character knowledge. Prioritize contradictions and uncertain points.",
-    "character_arc": "Check whether character emotion, motivation, and behavior match the current story state.",
-    "pacing": "Check chapter rhythm, scene transitions, information density, and whether the ending supports the chapter function.",
-    "style": "Check readability, narrative voice consistency, repetition, over-explaining, awkward phrasing, or generated-text artifacts.",
-    "mystery_fairness": "Check whether hidden facts, clues, or reveals are disclosed earlier than the brief or canon allows.",
-    "movie_director": "Check visual clarity, staging, emotional beats, transitions, and concrete performable action.",
-}
+def _enabled_standard_reviewers(story_path: Path) -> list[tuple[str, dict[str, Any]]]:
+    config = _load_yaml_file(story_path / "reviewers" / "reviewer_config.yaml")
+    reviewers = config.get("standard_reviewers", {})
+    if not isinstance(reviewers, dict):
+        return []
+    enabled: list[tuple[str, dict[str, Any]]] = []
+    for reviewer_id, reviewer_config in sorted(reviewers.items()):
+        if isinstance(reviewer_config, dict) and reviewer_config.get("enabled", True):
+            enabled.append((str(reviewer_id), reviewer_config))
+    return enabled
 
 
-@contextmanager
-def hard_timeout(seconds: int):
-    """Bound slow local model streams; urllib's timeout only covers socket stalls."""
-    def handle_timeout(_signum, _frame):
-        raise TimeoutError(f"local reviewer exceeded {seconds}s")
+def _reviewer_profile(reviewer_id: str) -> str:
+    profile = load_markdown_file(REVIEWER_ROOT / f"{reviewer_id}.md")
+    if profile.strip():
+        return profile
+    return f"# {reviewer_id} Reviewer\nReview the draft using the standard review report template."
 
-    previous = signal.signal(signal.SIGALRM, handle_timeout)
-    signal.alarm(seconds)
+
+def _model_chain(config: dict[str, Any], reviewer_config: dict[str, Any]) -> list[dict[str, Any]]:
     try:
-        yield
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, previous)
+        return select_model_for_reviewer(config, reviewer_config)
+    except (KeyError, ValueError):
+        provider_group = config.get("review_policy", {}).get("provider_group", "local_first")
+        return get_fallback_chain(config, str(provider_group))
 
 
-def read(story_root: Path, path: str) -> str:
-    return (story_root / path).read_text(encoding="utf-8")
+def _review_prompt(
+    story_id: str,
+    chapter: int,
+    reviewer_id: str,
+    reviewer_config: dict[str, Any],
+    review_pack: str,
+) -> str:
+    can_block = "yes" if reviewer_config.get("can_block_gate", True) else "no"
+    return f"""You are reviewer `{reviewer_id}` for story `{story_id}`, chapter {chapter}.
 
+## Reviewer Profile
+{_reviewer_profile(reviewer_id)}
 
-def _clean_cli_output(output: str) -> str:
-    text = output.replace("\r", "")
-    lines = [line.rstrip() for line in text.splitlines()]
-    filtered = [
-        line for line in lines
-        if line.strip() and "Thinking..." not in line and not line.lstrip().startswith("...")
-    ]
-    return "\n".join(filtered).strip()
+## Reviewer Settings
+- can_block_gate: {can_block}
+- intelligence: {reviewer_config.get("intelligence", "medium")}
 
+## Review Pack
+{review_pack}
 
-def _extract_context_limit(value) -> int | None:
-    candidates: list[int] = []
+## Output Format
+Return only a Markdown review report with this structure:
 
-    def visit(item, key_hint: str = ""):
-        if isinstance(item, dict):
-            for key, nested in item.items():
-                hint = str(key).lower()
-                if isinstance(nested, int) and (
-                    "context" in hint or "num_ctx" in hint or hint.endswith("ctx")
-                ):
-                    candidates.append(nested)
-                visit(nested, hint)
-            return
-        if isinstance(item, list):
-            for nested in item:
-                visit(nested, key_hint)
-            return
-        if isinstance(item, str):
-            for pattern in (
-                r"(?:context length|context window|num_ctx|ctx)[^\d]{0,16}(\d{4,7})",
-                r"(\d{4,7})[^\n]{0,24}(?:tokens?|context)",
-            ):
-                for match in re.finditer(pattern, item, flags=re.IGNORECASE):
-                    candidates.append(int(match.group(1)))
-
-    visit(value)
-    plausible = [candidate for candidate in candidates if 1024 <= candidate <= 2_000_000]
-    return max(plausible) if plausible else None
-
-
-def inspect_context_limit() -> int | None:
-    payload = json.dumps({"model": MODEL}).encode("utf-8")
-    request = urllib.request.Request(
-        OLLAMA_SHOW_URL,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=CONTEXT_PROBE_TIMEOUT) as response:
-            detected = _extract_context_limit(json.loads(response.read().decode("utf-8")))
-            if detected:
-                return detected
-    except (OSError, URLError, json.JSONDecodeError):
-        pass
-
-    try:
-        proc = subprocess.run(
-            ["ollama", "show", MODEL, "--json"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=CONTEXT_PROBE_TIMEOUT,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if proc.returncode != 0:
-        return None
-    try:
-        return _extract_context_limit(json.loads(proc.stdout))
-    except json.JSONDecodeError:
-        return _extract_context_limit(proc.stdout)
-
-
-def prepare_num_ctx(prompt: str) -> int:
-    context_limit = inspect_context_limit()
-    num_ctx = min(NUM_CTX, context_limit) if context_limit else NUM_CTX
-    estimated_prompt_tokens = max(1, len(prompt) // 4)
-    if estimated_prompt_tokens + NUM_PREDICT >= num_ctx:
-        limit_note = f" detected model context limit={context_limit}" if context_limit else ""
-        raise RuntimeError(
-            "local review prompt is likely too large for the selected model "
-            f"(estimated_prompt_tokens={estimated_prompt_tokens}, "
-            f"num_predict={NUM_PREDICT}, num_ctx={num_ctx}.{limit_note})"
-        )
-    return num_ctx
-
-
-def generate_via_cli(prompt: str) -> str:
-    with hard_timeout(REQUEST_TIMEOUT):
-        proc = subprocess.run(
-            ["ollama", "run", MODEL],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=REQUEST_TIMEOUT,
-        )
-    if proc.returncode != 0:
-        stderr = (proc.stderr or "").strip()
-        raise RuntimeError(f"ollama CLI failed ({proc.returncode}): {stderr or 'no stderr'}")
-    text = _clean_cli_output(proc.stdout)
-    if not text:
-        raise RuntimeError("ollama CLI returned an empty response")
-    return text
-
-
-def generate(prompt: str) -> str:
-    num_ctx = prepare_num_ctx(prompt)
-    payload = {
-        "model": MODEL,
-        "prompt": prompt,
-        "stream": STREAM_RESPONSE,
-        "options": {
-            "temperature": 0.25,
-            "num_ctx": num_ctx,
-            "num_predict": NUM_PREDICT,
-        },
-    }
-    data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        OLLAMA_URL,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        chunks = []
-        started = time.monotonic()
-        with hard_timeout(REQUEST_TIMEOUT):
-            socket_timeout = REQUEST_TIMEOUT if not STREAM_RESPONSE else min(30, REQUEST_TIMEOUT)
-            with urllib.request.urlopen(request, timeout=socket_timeout) as response:
-                if not STREAM_RESPONSE:
-                    event = json.loads(response.read().decode("utf-8"))
-                    text = (event.get("response") or "").strip()
-                    if text:
-                        return text
-                    diagnostics = [
-                        f"{key}={event[key]}"
-                        for key in ("done", "done_reason", "total_duration", "eval_count")
-                        if key in event
-                    ]
-                    raise RuntimeError(
-                        f"local model returned an empty response ({', '.join(diagnostics)})."
-                    )
-                for raw_line in response:
-                    if time.monotonic() - started > REQUEST_TIMEOUT:
-                        raise TimeoutError(f"local reviewer exceeded {REQUEST_TIMEOUT}s")
-                    if not raw_line.strip():
-                        continue
-                    event = json.loads(raw_line.decode("utf-8"))
-                    chunks.append(event.get("response", ""))
-                    if event.get("done") or sum(len(chunk) for chunk in chunks) >= MAX_RESPONSE_CHARS:
-                        break
-        text = "".join(chunks).strip()
-        if text:
-            return text
-        raise RuntimeError("local model returned an empty response (stream ended without text).")
-    except RuntimeError as exc:
-        if "empty response" not in str(exc):
-            raise
-        return generate_via_cli(prompt)
-
-
-def make_draft_extract(draft: str) -> str:
-    lines = draft.splitlines()
-    section_starts = [index for index, line in enumerate(lines) if line.startswith("## ")]
-    section_samples = []
-    for start in section_starts:
-        section_samples.append("\n".join(lines[start : start + SECTION_SAMPLE_LINES]))
-
-    risk_terms = [
-        "secret",
-        "truth",
-        "revealed",
-        "forbidden",
-        "prophecy",
-        "memory",
-        "identity",
-        "timeline",
-        "rule",
-        "power",
-        "betrayal",
-        "真相",
-        "秘密",
-        "規則",
-        "記憶",
-        "secreto",
-        "verdad",
-    ]
-    risk_lines = [
-        f"{index + 1}: {line}"
-        for index, line in enumerate(lines)
-        if any(term in line for term in risk_terms)
-    ]
-    return (
-        "[Chapter Samples]\n"
-        + "\n\n".join(section_samples)
-        + "\n\n[Lines Matching Generic Risk Terms]\n"
-        + "\n".join(risk_lines[:RISK_LINE_LIMIT])
-    )
-
-
-def review_prompt(name: str, focus: str, canon: str, brief: str, draft_extract: str) -> str:
-    if ULTRA_MINIMAL_PROMPT:
-        return f"""Output only the review result. Do not include preamble, hidden reasoning, or blank lines.
-Use exactly four lines:
-# {name} Review
-Verdict: pass|needs_revision|blocked
-Issue: severity=none|minor|major|blocker; reason=one sentence; task=one sentence
-Risk: one sentence
-
-You are a local fiction reviewer. Do not rewrite the chapter and do not add canon. Judge only from the supplied materials. Mark uncertainty explicitly.
-Review focus: {focus}
-
-[BRIEF]
-{brief[:900]}
-
-[CANON EXCERPT]
-{canon[:900]}
-
-[DRAFT EXTRACT]
-{draft_extract}
-"""
-
-    if MINIMAL_PROMPT:
-        return f"""You are a local fiction reviewer. Do not rewrite the chapter and do not add canon. Judge only from the supplied materials. Mark uncertainty explicitly.
-
-Reviewer: {name}
-Focus: {focus}
-
-Output in the story's configured language when clear from the materials; otherwise use English.
-Keep the review under 220 words and use this format:
-# {name} Review
-## Verdict
-## Issues
-- severity: blocker|major|minor|none
-  reasoning:
-  task:
-## Risks
-
-[CANON]
-{canon}
-
-[BRIEF]
-{brief}
-
-[DRAFT EXTRACT]
-{draft_extract}
-"""
-
-    return f"""You are a local fiction reviewer. Do not rewrite the chapter and do not add canon.
-Judge only from the canon, brief, and draft extract below. Mark uncertainty explicitly.
-
-Reviewer: {name}
-Review focus: {focus}
-
-Use this output format:
-# {name} Review
+# Review Report
+reviewer_id: {reviewer_id}
+reviewer_type: standard
+story_id: {story_id}
+chapter: {chapter}
+status: pass | pass_with_minor_issues | needs_revision | blocked
 ## Summary
-## Strengths
+## Severity Counts
+- blocker: 0
+- major: 0
+- minor: 0
+- note: 0
 ## Issues
-- severity: ...
-  reasoning: ...
-  suggested revision task: ...
-## Contradiction Risks
-## Canon Risks
-## Spoiler Risks
-## Revision Tasks
-## Optional Canon Update Proposals
-
-Keep the review under 600 words and list only the highest risks. Limit Issues to three items.
-You are seeing chapter samples and risk-term lines, not the full draft. If the full draft is needed to confirm something, mark it as uncertain.
-
-[CANON]
-{canon}
-
-[CHAPTER BRIEF]
-{brief}
-
-[DRAFT EXTRACT]
-{draft_extract}
+Use one `### Issue` section per issue and include `severity:` and `rewrite_required: yes | no`.
+## Rewrite Recommendation
+rewrite_required: yes | no
+rewrite_scope: none | sentence | paragraph | scene | chapter
+## Gate Recommendation
+gate_status: accept | revise | block
+## Carry-Forward Tasks
+## Reviewer Notes
 """
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run local chapter reviewers for a story.")
-    parser.add_argument("chapter_number", nargs="?", type=int, help="Chapter number.")
-    parser.add_argument(
-        "--story",
-        default=os.environ.get("LOCAL_REVIEW_STORY"),
-        help="Story id or path. Defaults to LOCAL_REVIEW_STORY.",
-    )
-    parser.add_argument("--chapter", dest="chapter_option", type=int, help="Chapter number.")
-    args = parser.parse_args()
-    args.chapter_number = args.chapter_option or args.chapter_number
-    if not args.story:
-        parser.error("--story is required unless LOCAL_REVIEW_STORY is set")
-    if args.chapter_number is None:
-        parser.error("chapter number is required")
-    return args
+def _write_review_report(story_path: Path, chapter: int, reviewer_id: str, text: str) -> Path:
+    output_path = story_path / "reviews" / f"chapter_{chapter:03d}" / f"{reviewer_id}.md"
+    assert_story_write_allowed(output_path, story_path)
+    return safe_write_file(output_path, text.strip() + "\n", story_path)
 
 
-def main() -> int:
-    args = parse_args()
-    chapter = args.chapter_number
-    story_root = resolve_story_root(args.story, ROOT)
-    canon_files = [
-        "canon/world.md",
-        "canon/rules.md",
-        "canon/characters.md",
-        "canon/mystery_state.md",
-    ]
-    canon = "\n\n".join(
-        read(story_root, path) for path in canon_files if (story_root / path).exists()
-    )
-    canon = canon[:CANON_CHARS]
-    brief = read(story_root, f"summaries/chapter_{chapter:03d}_brief.md")
-    draft = read(story_root, f"drafts/chapter_{chapter:03d}.md")
-    draft_extract = make_draft_extract(draft)
-    out_dir = story_root / "reviews" / f"chapter_{chapter:03d}"
-    assert_write_inside_story_root(out_dir, story_root)
-    out_dir.mkdir(parents=True, exist_ok=True)
+def combine_reviews(story_path: Path, chapter: int, reports: list[Path]) -> Path:
+    """Combine individual review reports into one chapter-level report."""
+    parts = [f"# Combined Review\n\n- Chapter: {chapter}\n- Reports: {len(reports)}"]
+    for report in reports:
+        parts.append(f"## {report.stem}\n\n{report.read_text(encoding='utf-8').strip()}")
+    output_path = story_path / "reviews" / f"chapter_{chapter:03d}" / "combined_review.md"
+    assert_story_write_allowed(output_path, story_path)
+    return safe_write_file(output_path, "\n\n".join(parts).strip() + "\n", story_path)
 
-    current_outputs = {}
-    reviewers = REVIEWERS
-    if REQUESTED_REVIEWERS:
-        unknown = [name for name in REQUESTED_REVIEWERS if name not in REVIEWERS]
-        if unknown:
-            print(f"unknown reviewers: {', '.join(unknown)}", file=sys.stderr)
-            return 2
-        reviewers = {name: REVIEWERS[name] for name in REQUESTED_REVIEWERS}
 
-    failed = False
-    for name, focus in reviewers.items():
-        print(f"running {name}", flush=True)
-        try:
-            output = generate(review_prompt(name, focus, canon, brief, draft_extract))
-        except (TimeoutError, SocketTimeout, URLError, OSError, RuntimeError) as exc:
-            output = f"# {name} Review\n\nERROR: local reviewer failed: {exc}"
-            failed = True
-        if not output:
-            output = f"# {name} Review\n\nERROR: local model returned an empty response."
-            failed = True
-        out_path = out_dir / f"{name}.md"
-        assert_write_inside_story_root(out_path, story_root)
-        out_path.write_text(output + "\n", encoding="utf-8")
-        current_outputs[name] = output
+def write_review_gate(story_path: Path, chapter: int, combined_path: Path) -> Path:
+    """Write gate status derived from combined review text."""
+    combined = combined_path.read_text(encoding="utf-8")
+    status = recommended_gate_status(combined)
+    counts = count_severities(combined)
+    content = f"""# Review Gate Status
 
-    combined_parts = []
-    for name in REVIEWERS:
-        if name in current_outputs:
-            combined_parts.append(current_outputs[name])
-            continue
-        existing_path = out_dir / f"{name}.md"
-        if existing_path.exists():
-            combined_parts.append(existing_path.read_text(encoding="utf-8").strip())
-    combined = "\n\n---\n\n".join(combined_parts) + "\n"
-    combined_path = out_dir / "combined_review.md"
-    assert_write_inside_story_root(combined_path, story_root)
-    combined_path.write_text(combined, encoding="utf-8")
-    print(f"wrote {combined_path}")
-    return 1 if failed else 0
+- Chapter: {chapter}
+- Gate Status: {status}
+- Blocker Issues: {counts["blocker"]}
+- Major Issues: {counts["major"]}
+- Minor Issues: {counts["minor"]}
+- Notes: {counts["note"]}
+- Combined Review: {combined_path.relative_to(story_path)}
+"""
+    output_path = story_path / "reviews" / f"chapter_{chapter:03d}" / "review_gate_status.md"
+    assert_story_write_allowed(output_path, story_path)
+    return safe_write_file(output_path, content, story_path)
+
+
+def run_review(
+    workspace_path: str | Path,
+    story_id: str,
+    chapter: int,
+    config_path: str | None = None,
+    options: dict[str, Any] | None = None,
+) -> dict[str, Path]:
+    """Run all enabled standard reviewers for a chapter."""
+    story_path = resolve_story_path(workspace_path, story_id)
+    config = load_config(config_path)
+    review_pack_path = build_review_pack(workspace_path, story_id, chapter)
+    review_pack = load_story_context_file(story_path, "review_pack.md")
+    reports: list[Path] = []
+
+    for reviewer_id, reviewer_config in _enabled_standard_reviewers(story_path):
+        prompt = _review_prompt(story_id, chapter, reviewer_id, reviewer_config, review_pack)
+        result = attempt_model_chain(prompt, _model_chain(config, reviewer_config), config, options)
+        if not result.get("ok"):
+            attempts = result.get("attempts", [])
+            raise RuntimeError(f"reviewer {reviewer_id} failed for all configured models: {attempts}")
+        reports.append(_write_review_report(story_path, chapter, reviewer_id, str(result.get("text", ""))))
+
+    if not reports:
+        raise RuntimeError("no enabled standard reviewers found")
+
+    combined_path = combine_reviews(story_path, chapter, reports)
+    gate_path = write_review_gate(story_path, chapter, combined_path)
+    return {"review_pack": review_pack_path, "combined_review": combined_path, "review_gate": gate_path}
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint for direct module execution."""
+    parser = argparse.ArgumentParser(description="Run chapter review.")
+    parser.add_argument("--workspace", required=True)
+    parser.add_argument("--story", required=True)
+    parser.add_argument("--chapter", required=True, type=int)
+    parser.add_argument("--config")
+    args = parser.parse_args(argv)
+    outputs = run_review(args.workspace, args.story, args.chapter, args.config)
+    for name, path in outputs.items():
+        print(f"{name}: {path}")
+    return 0
 
 
 if __name__ == "__main__":
