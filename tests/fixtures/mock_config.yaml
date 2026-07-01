@@ -1,0 +1,20 @@
+config_version: 1
+providers:
+  mock:
+    type: mock
+    enabled: true
+model_profiles:
+  mock_writer:
+    provider: mock
+    model: mock-writer
+fallback_chains:
+  mock_first:
+    - mock_writer
+writing_stages:
+  chapter_generation:
+    provider_group: mock_first
+review_policy:
+  provider_group: mock_first
+story_tools:
+  provider_group: mock_first
+  allow_local: true

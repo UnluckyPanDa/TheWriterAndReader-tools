@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import yaml
+from shared.lib.yaml_utils import load_yaml_text
 
 
 def load_story_yaml(story_path: str | Path) -> dict:
@@ -12,7 +12,7 @@ def load_story_yaml(story_path: str | Path) -> dict:
     path = Path(story_path).expanduser().resolve(strict=False) / "story.yaml"
     if not path.exists():
         raise FileNotFoundError(f"story.yaml not found: {path}")
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data = load_yaml_text(path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ValueError(f"story.yaml must contain a mapping: {path}")
     return data

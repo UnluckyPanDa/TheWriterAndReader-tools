@@ -6,8 +6,6 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from shared.lib.config_loader import load_config
 from shared.lib.model_router import attempt_model_chain, get_fallback_chain, select_model_for_reviewer
 from shared.lib.path_rules import assert_story_write_allowed
@@ -15,6 +13,7 @@ from shared.lib.review_parser import count_severities, recommended_gate_status
 from shared.lib.safe_write import safe_write_file
 from shared.lib.story_loader import load_markdown_file, load_story_context_file
 from shared.lib.workspace_loader import resolve_story_path
+from shared.lib.yaml_utils import load_yaml_text
 from tools.review.build_review_pack import build_review_pack
 
 
@@ -24,7 +23,7 @@ REVIEWER_ROOT = Path(__file__).resolve().parent / "standard-reviewers"
 def _load_yaml_file(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data = load_yaml_text(path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ValueError(f"YAML file must contain a mapping: {path}")
     return data

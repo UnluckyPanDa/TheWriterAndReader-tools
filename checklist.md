@@ -14,12 +14,12 @@
 - [x] Implement publish pack builder.
 - [x] Wire argparse CLI commands.
 - [x] Fill non-empty prompt templates.
-- [ ] Create fixture workspace.
-- [ ] Add focused pytest coverage.
+- [x] Create fixture workspace.
+- [x] Add focused pytest coverage.
 - [ ] Run required CLI validation commands.
 - [ ] Run `pytest`.
 - [ ] Scan for empty Python files and empty prompt markdown.
 
 ## Next File To Do
 
-`tests/fixtures/workspace/workspace.yaml`
+`tests/run_tests.sh`

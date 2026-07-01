@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
+from shared.lib.yaml_utils import load_yaml_text
 
 
 def load_series_yaml(series_path: str | Path) -> dict:
@@ -11,7 +11,7 @@ def load_series_yaml(series_path: str | Path) -> dict:
     path = Path(series_path).expanduser().resolve(strict=False) / "series.yaml"
     if not path.exists():
         raise FileNotFoundError(f"series.yaml not found: {path}")
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data = load_yaml_text(path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ValueError(f"series.yaml must contain a mapping: {path}")
     return data

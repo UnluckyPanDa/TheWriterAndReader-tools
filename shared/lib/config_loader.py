@@ -6,10 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml
-except ImportError as exc:  # pragma: no cover - dependency contract
-    raise RuntimeError("PyYAML is required to load TheWriterAndReader config.") from exc
+from shared.lib.yaml_utils import dump_yaml, load_yaml_text
 
 SECRET_KEYS = {"api_key", "api_key_env", "token", "secret", "password"}
 
@@ -30,7 +27,7 @@ def load_yaml(path: Path) -> dict[str, Any]:
     """Load a YAML file as a dictionary."""
     if not path.exists():
         raise FileNotFoundError(f"YAML file does not exist: {path}")
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data = load_yaml_text(path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ValueError(f"YAML file must contain a mapping at top level: {path}")
     return data
@@ -104,7 +101,7 @@ def export_config(config: dict[str, Any], output_path: str | Path, mode: str = "
     target = Path(output_path).expanduser()
     target.parent.mkdir(parents=True, exist_ok=True)
     data = copy.deepcopy(config) if mode == "full-with-secrets" else _strip_secrets(config)
-    target.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    target.write_text(dump_yaml(data, sort_keys=False), encoding="utf-8")
     return target
 
 

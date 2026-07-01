@@ -4,15 +4,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from shared.lib.safe_write import assert_inside_root
+from shared.lib.yaml_utils import load_yaml_text
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Required YAML file not found: {path}")
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data = load_yaml_text(path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ValueError(f"YAML file must contain a mapping: {path}")
     return data
