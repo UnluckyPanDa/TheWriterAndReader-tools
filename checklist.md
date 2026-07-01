@@ -11,7 +11,7 @@
 - [x] Implement write pack builder.
 - [x] Implement draft generation.
 - [x] Implement review pack, reviewer runner, review combiner, and review gate.
-- [ ] Implement publish pack builder.
+- [x] Implement publish pack builder.
 - [ ] Wire argparse CLI commands.
 - [ ] Fill non-empty prompt templates.
 - [ ] Create fixture workspace.
@@ -22,4 +22,4 @@
 
 ## Next File To Do
 
-`tools/publish/build_publish_pack.py`
+`cli/twr.py`
