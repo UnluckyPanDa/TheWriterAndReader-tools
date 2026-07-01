@@ -5,7 +5,7 @@ Generated: Mon 29 Jun 2026 16:54:23 PDT
 ## Repo
 
 ```text
-/Volumes/SN7100/Projects/TheWriterAndReader-tools
+.
 ```
 
 ## Branch and Status
