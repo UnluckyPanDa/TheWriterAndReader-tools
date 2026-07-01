@@ -1,0 +1,6 @@
+standard_reviewers:
+  continuity:
+    enabled: true
+    can_block_gate: true
+    provider_group: mock_first
+    intelligence: medium

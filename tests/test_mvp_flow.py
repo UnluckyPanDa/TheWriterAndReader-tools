@@ -20,13 +20,16 @@ FIXTURES = Path(__file__).parent / "fixtures"
 class MvpFlowTests(unittest.TestCase):
     def copy_workspace(self, temp_dir: str) -> Path:
         target = Path(temp_dir) / "workspace"
-        shutil.copytree(FIXTURES / "workspace", target)
+        shutil.copytree(FIXTURES / "workspace_template", target)
+        (target / "workspace.template.yaml").replace(target / "workspace.yaml")
         return target
 
     def test_workspace_fixture_loads(self) -> None:
-        workspace = load_workspace(FIXTURES / "workspace")
-        self.assertEqual(workspace["stories"], ["story-1"])
-        self.assertEqual(workspace["series"], ["series-1"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = self.copy_workspace(temp_dir)
+            workspace = load_workspace(workspace_path)
+            self.assertEqual(workspace["stories"], ["story-1"])
+            self.assertEqual(workspace["series"], ["series-1"])
 
     def test_story_language_supports_nested_primary(self) -> None:
         self.assertEqual(story_language({"language": {"primary": "en"}}), "en")

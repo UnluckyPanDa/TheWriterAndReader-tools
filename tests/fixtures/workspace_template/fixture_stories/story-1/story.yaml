@@ -1,0 +1,19 @@
+id: story-1
+title: Fixture Story
+language:
+  primary: en
+  allowed:
+    - en
+series:
+  enabled: true
+  series_id: series-1
+paths:
+  canon: canon/
+  writer: writer/
+  storyline: storyline/
+  context: context/
+  drafts: drafts/
+  chapters: chapters/
+  reviews: reviews/
+reviewers:
+  config: reviewers/reviewer_config.yaml

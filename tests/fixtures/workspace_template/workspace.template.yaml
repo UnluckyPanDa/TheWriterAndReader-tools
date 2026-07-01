@@ -1,0 +1,7 @@
+workspace_id: fixture-workspace
+stories:
+  story-1:
+    path: fixture_stories/story-1
+series:
+  series-1:
+    path: fixture_series/series-1

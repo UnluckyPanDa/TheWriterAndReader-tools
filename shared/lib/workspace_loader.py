@@ -52,6 +52,20 @@ def _entry_path(entries: Any, entry_id: str, default: str) -> str:
     return default
 
 
+def _entry_ids(entries: Any) -> list[str]:
+    if isinstance(entries, dict):
+        return sorted(str(entry_id) for entry_id in entries)
+    if isinstance(entries, list):
+        ids: list[str] = []
+        for item in entries:
+            if isinstance(item, dict) and item.get("id"):
+                ids.append(str(item["id"]))
+            elif isinstance(item, str):
+                ids.append(item)
+        return sorted(ids)
+    return []
+
+
 def resolve_story_path(workspace_path: str | Path, story_id: str) -> Path:
     """Resolve a story id to a directory inside the workspace."""
     root = Path(workspace_path).expanduser().resolve(strict=False)
@@ -79,6 +93,9 @@ def resolve_series_path(workspace_path: str | Path, series_id: str) -> Path:
 def list_stories(workspace_path: str | Path) -> list[str]:
     """List story ids in a workspace."""
     root = Path(workspace_path).expanduser().resolve(strict=False)
+    configured = _entry_ids(load_workspace_yaml(root).get("stories"))
+    if configured:
+        return configured
     stories_root = root / "stories"
     if not stories_root.exists():
         return []
@@ -88,6 +105,9 @@ def list_stories(workspace_path: str | Path) -> list[str]:
 def list_series(workspace_path: str | Path) -> list[str]:
     """List series ids in a workspace."""
     root = Path(workspace_path).expanduser().resolve(strict=False)
+    configured = _entry_ids(load_workspace_yaml(root).get("series"))
+    if configured:
+        return configured
     series_root = root / "series"
     if not series_root.exists():
         return []
