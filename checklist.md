@@ -13,7 +13,7 @@
 - [x] Implement review pack, reviewer runner, review combiner, and review gate.
 - [x] Implement publish pack builder.
 - [x] Wire argparse CLI commands.
-- [ ] Fill non-empty prompt templates.
+- [x] Fill non-empty prompt templates.
 - [ ] Create fixture workspace.
 - [ ] Add focused pytest coverage.
 - [ ] Run required CLI validation commands.
@@ -22,4 +22,4 @@
 
 ## Next File To Do
 
-`tools/writing/prompts/README.md`
+`tests/fixtures/workspace/workspace.yaml`
