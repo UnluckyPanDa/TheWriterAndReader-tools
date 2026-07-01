@@ -12,7 +12,7 @@
 - [x] Implement draft generation.
 - [x] Implement review pack, reviewer runner, review combiner, and review gate.
 - [x] Implement publish pack builder.
-- [ ] Wire argparse CLI commands.
+- [x] Wire argparse CLI commands.
 - [ ] Fill non-empty prompt templates.
 - [ ] Create fixture workspace.
 - [ ] Add focused pytest coverage.
@@ -22,4 +22,4 @@
 
 ## Next File To Do
 
-`cli/twr.py`
+`tools/writing/prompts/README.md`
