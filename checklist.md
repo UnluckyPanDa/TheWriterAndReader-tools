@@ -16,10 +16,10 @@
 - [x] Fill non-empty prompt templates.
 - [x] Create fixture workspace.
 - [x] Add focused pytest coverage.
-- [ ] Run required CLI validation commands.
+- [x] Run required CLI validation commands.
 - [ ] Run `pytest`.
-- [ ] Scan for empty Python files and empty prompt markdown.
+- [x] Scan for empty Python files and empty prompt markdown.
 
 ## Next File To Do
 
-`tests/run_tests.sh`
+`pytest` is not installed in the current Python runtime.
