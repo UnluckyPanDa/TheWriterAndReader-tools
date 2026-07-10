@@ -26,8 +26,14 @@ twr = "cli.twr:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["cli*", "shared*"]
+include = ["cli*", "shared*", "tools*"]
 namespaces = true
+
+[tool.setuptools.package-data]
+"tools.review" = ["prompts/*.md", "reviewer-templates/*.md", "standard-reviewers/*.md"]
+"tools.wizard" = ["prompts/*.md", "templates/**/*.md", "templates/**/*.yaml"]
+"tools.writing" = ["prompts/*.md", "templates/*.md"]
+"tools.publish" = ["prompts/*.md", "templates/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
