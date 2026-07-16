@@ -19,6 +19,9 @@ Before drafting, refining, explaining, or promoting prose, load:
 8. Prior accepted chapters or summaries needed for continuity.
 9. Review feedback when refining a draft.
 
+Chapter drafting must rebuild the active write pack before model generation.
+Do not reuse a nonempty pack without verifying its story and chapter inputs.
+
 If a required input is missing, report the gap in the run output instead of
 inventing replacement facts.
 
@@ -58,6 +61,8 @@ Each proposed canon update must include:
 
 - Keep prose consistent with accepted canon, accepted chapters, the writer
   profile, language settings, and the active chapter plan.
+- Validate a scene contract with a concrete pressure and state change before
+  generating chapter prose.
 - Do not reveal hidden truths before the reveal lock allows them.
 - Use the point of view, names, titles, and forms of address that are valid for
   the current chapter.

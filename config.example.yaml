@@ -47,6 +47,10 @@ fallback_chains:
   online_only_high_accuracy:
     - online_writer
 writing_stages:
+  scene_planning:
+    intelligence: high
+    creativity: medium
+    provider_group: local_first_with_online_fallback
   chapter_generation:
     intelligence: high
     creativity: high

@@ -7,7 +7,7 @@ from typing import Any
 
 from shared.lib.chapter_context import load_chapter_inputs
 from shared.lib.relationship_graph import relationship_graph_summary
-from shared.lib.safe_write import safe_write_file
+from shared.lib.safe_write import assert_inside_root, safe_write_file
 from shared.lib.series_loader import load_series_pack
 from shared.lib.story_loader import (
     load_markdown_file,
@@ -70,6 +70,15 @@ def _load_series_context(workspace_path: str | Path, story_yaml: dict[str, Any])
     return "\n\n".join(parts) if parts else "No series context is configured for this story."
 
 
+def _writer_profile_path(story_path: Path, story_yaml: dict[str, Any]) -> Path:
+    writer = story_yaml.get("writer", {})
+    configured = writer.get("profile") if isinstance(writer, dict) else None
+    relative = configured if isinstance(configured, str) and configured.strip() else "writer/writer.md"
+    profile_path = (story_path / relative).resolve(strict=False)
+    assert_inside_root(profile_path, story_path)
+    return profile_path
+
+
 def build_write_pack(
     workspace_path: str,
     story_id: str,
@@ -81,7 +90,7 @@ def build_write_pack(
     story_path = resolve_story_path(workspace_path, story_id)
     story_yaml = load_story_yaml(story_path)
 
-    writer_voice = load_markdown_file(story_path / "writer" / "writer.md")
+    writer_voice = load_markdown_file(_writer_profile_path(story_path, story_yaml))
     canon = load_story_canon_file(story_path, "canon.md")
     characters = load_story_canon_file(story_path, "characters.md")
     relationships = load_story_canon_file(story_path, "relationships_and_names.md")
@@ -102,7 +111,7 @@ def build_write_pack(
 ## Story Metadata
 {_metadata_block(story_yaml)}
 
-## Writer Voice
+## Writer Voice [VOICE]
 {_non_empty(writer_voice, "writer voice")}
 
 ## Current Task
@@ -110,50 +119,50 @@ def build_write_pack(
 - Chapter: {chapter}
 - Active chapter direction found: {chapter_inputs["has_active_direction"]}.
 
-## Active Chapter Brief
+## Active Chapter Brief [BEAT]
 {chapter_inputs["brief"]}
 
-## Active Chapter Context
+## Active Chapter Context [REFERENCE]
 {chapter_inputs["context"]}
 
-## Active Chapter Generation Instruction
+## Active Chapter Generation Instruction [BEAT]
 {chapter_inputs["instruction"]}
 
-## Previous Accepted Review Handoff
+## Previous Accepted Review Handoff [SOURCE_TEXT]
 {chapter_inputs["previous_handoff"]}
 
-## Active Canon
+## Active Canon [FACT]
 {_non_empty(canon, "canon")}
 
-## Canon Usage Contract
+## Canon Usage Contract [CONSTRAINT]
 - Canon is private factual reference, not source prose or a vocabulary list.
 - Use canon only to determine what is true, what the viewpoint character knows, what they want, what cannot happen, and what must remain unrevealed.
 - Do not copy, paraphrase, explain, or repeatedly echo canon wording in narration.
 - Include a canon fact in the chapter only when a character encounters its concrete consequence.
 - Prioritize the current chapter objective, character desire and resistance, concrete action, and consequence over wider background.
 
-## Active Characters
+## Active Characters [FACT]
 {_non_empty(characters, "character")}
 
-## Relationship and Name Rules
+## Relationship and Name Rules [CONSTRAINT]
 {_non_empty(relationships, "relationship and name rule")}
 
-## Chapter-Visible Relationship Graph
+## Chapter-Visible Relationship Graph [FACT]
 {relationship_summary}
 
-## Active Locations and Objects
+## Active Locations and Objects [FACT]
 {_non_empty(locations, "location and object")}
 
-## Chapter Plan and Pacing
+## Chapter Plan and Pacing [REFERENCE]
 {legacy_plan}
 
-## Reveal Lock
+## Reveal Lock [FORBIDDEN]
 {_non_empty(reveal_lock, "reveal lock")}
 
-## Previous Context and Handover
+## Previous Context and Handover [REFERENCE]
 {chapter_inputs["global_handover"]}
 
-## Series Context
+## Series Context [FACT]
 {series_context}
 
 ## Output Requirements

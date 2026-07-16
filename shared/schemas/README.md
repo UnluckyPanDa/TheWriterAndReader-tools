@@ -11,3 +11,6 @@ Guidelines:
 `relationship_graph.schema.json` defines the story-neutral character and
 relationship contract used by the wizard's local 3D relationship plot and by
 chapter context packs.
+
+`scene_contract.schema.json` defines the required scene goals, pressure, state
+changes, and ending turns validated before chapter drafting.

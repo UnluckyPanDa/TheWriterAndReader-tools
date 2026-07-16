@@ -100,6 +100,12 @@ standard reviewers, target draft, canon, reveal lock, storyline, and
 `context/review_pack.md`, then writes review outputs inside the selected story
 folder.
 
+`twr write draft` rebuilds the active chapter pack, validates a scene contract,
+and then generates the chapter. `twr review run` records correctness and
+novelness independently; acceptance requires continuity, reveal-lock, editor,
+pacing, tone, and character review results. Generated scene contracts and run
+metadata remain inside the selected story's `runs/` directory.
+
 Neither skill may directly edit story canon, series canon, or another story's
 files. Canon-impacting findings or new facts must be recorded as proposed canon
 updates inside the selected story folder.

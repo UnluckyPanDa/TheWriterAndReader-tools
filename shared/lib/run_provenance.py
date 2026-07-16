@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from shared.lib.path_rules import assert_story_write_allowed
 from shared.lib.safe_write import safe_write_file
@@ -28,10 +29,14 @@ def write_run_provenance(
     result: dict[str, Any],
     config: dict[str, Any],
     output_paths: dict[str, str],
+    details: dict[str, Any] | None = None,
 ) -> Path:
-    """Persist the selected model and fallback attempts without storing prompts."""
+    """Persist latest and immutable run records without storing prompts."""
     root = Path(story_path).expanduser().resolve(strict=False)
+    details = details or {}
+    run_id = str(details.get("run_id") or uuid4())
     payload = {
+        "run_id": run_id,
         "operation": operation,
         "chapter": chapter,
         "recorded_at": datetime.now(UTC).isoformat(),
@@ -40,6 +45,10 @@ def write_run_provenance(
         "attempts": result.get("attempts", []),
         "outputs": output_paths,
     }
+    payload.update({key: value for key, value in details.items() if key != "run_id"})
+    history_path = root / "runs" / f"chapter_{chapter:03d}" / run_id / f"{operation}.json"
+    assert_story_write_allowed(history_path, root)
+    safe_write_file(history_path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n", root)
     output_path = root / "runs" / f"chapter_{chapter:03d}_{operation}.json"
     assert_story_write_allowed(output_path, root)
     return safe_write_file(output_path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n", root)

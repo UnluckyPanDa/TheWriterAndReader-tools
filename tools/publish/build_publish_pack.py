@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import re
 from pathlib import Path
 from typing import Any
 
@@ -32,15 +34,29 @@ def _chapter_source(story_path: Path, chapter: int) -> tuple[str, str]:
 
 
 def _gate_status_text(story_path: Path, chapter: int) -> str:
+    current = load_markdown_file(story_path / "reviews" / "chapter" / f"{chapter:03d}" / "review_gate_status.md")
+    if current.strip():
+        return current
     return load_markdown_file(story_path / "reviews" / f"chapter_{chapter:03d}" / "review_gate_status.md")
 
 
-def _source_warning(source_type: str, gate_status: str) -> str:
+def _gate_field(gate_status: str, name: str) -> str:
+    match = re.search(rf"^{re.escape(name)}:\s*([^\n]+)$", gate_status, re.IGNORECASE | re.MULTILINE)
+    return match.group(1).strip().lower() if match else ""
+
+
+def _source_warning(source_type: str, gate_status: str, chapter_text: str) -> str:
     if source_type == "accepted":
         return "No publish source warning."
     if source_type == "draft":
-        if "Gate Status: accepted" in gate_status:
+        current_hash = hashlib.sha256(chapter_text.encode("utf-8")).hexdigest()
+        accepted = _gate_field(gate_status, "status") in {"accepted", "accepted_with_notes"}
+        complete = _gate_field(gate_status, "run_state") == "complete"
+        reviewed_hash = _gate_field(gate_status, "draft_sha256")
+        if accepted and complete and reviewed_hash == current_hash:
             return "Draft source has an accepted review gate but has not been copied to chapters/."
+        if accepted and reviewed_hash and reviewed_hash != current_hash:
+            return "Draft source changed after its accepted review and must be reviewed again."
         return "Draft source is not accepted for final publishing."
     return "No chapter source was found."
 
@@ -59,7 +75,7 @@ def build_publish_pack(
     gate_status = _gate_status_text(story_path, chapter)
     title = str(story_yaml.get("title") or story_id)
     language = _language(story_yaml)
-    warning = _source_warning(source_type, gate_status)
+    warning = _source_warning(source_type, gate_status, chapter_text)
 
     content = f"""# Publish Pack
 

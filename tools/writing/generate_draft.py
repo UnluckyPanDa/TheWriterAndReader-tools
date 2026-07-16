@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from shared.lib.config_loader import load_config
 from shared.lib.model_router import attempt_model_chain, select_model_for_stage
 from shared.lib.path_rules import assert_story_write_allowed
 from shared.lib.run_provenance import require_explicit_runtime_config, write_run_provenance
+from shared.lib.scene_contract import parse_scene_contract
 from shared.lib.safe_write import safe_write_file
-from shared.lib.story_loader import load_markdown_file, load_story_context_file, load_story_yaml
+from shared.lib.story_loader import load_markdown_file, load_story_yaml
 from shared.lib.workspace_loader import resolve_story_path
 from tools.writing.build_write_pack import build_write_pack
 
@@ -83,23 +86,68 @@ def normalize_generated_draft(text: str, heading: str) -> str:
     return f"{heading}\n\n{chapter_text}".strip()
 
 
-def build_generation_prompt(workspace_path: str | Path, story_id: str, chapter: int) -> str:
-    """Build the model prompt from the current write pack."""
+def build_scene_contract_prompt(story_id: str, chapter: int, write_pack: str) -> str:
+    """Build the planning prompt for a schema-validated scene contract."""
+    return f"""Create the scene contract JSON for the requested fiction chapter.
+
+story_id: {story_id}
+chapter: {chapter}
+
+## Write Pack
+{write_pack}
+
+## Scene Contract Rules
+- Return only one JSON object with schema_version, story_id, chapter, and scenes.
+- Every scene needs a unique scene_id, viewpoint_character, starting_state, immediate_goal, pressure, opposition, change_axes, required_change, physical_setting, active_characters, required_beats, forbidden_reveals, and ending_turn.
+- change_axes may contain only: knowledge, emotion, relationship, practical_situation, danger, intention, mystery, access, commitment, reader_expectation.
+- Every scene must change at least one axis and end in a materially different state.
+- Preserve canon and reveal timing. Treat supplied wording as reference, not prose to copy.
+- Do not include Markdown fences, commentary, or draft prose.
+
+Return only the Scene Contract JSON.
+"""
+
+
+def _scene_contract_repair_prompt(
+    story_id: str,
+    chapter: int,
+    invalid_text: str,
+    validation_error: str,
+) -> str:
+    return f"""Repair the Scene Contract JSON so it satisfies the required contract.
+
+story_id: {story_id}
+chapter: {chapter}
+validation_error: {validation_error}
+
+## Invalid Output
+{invalid_text}
+
+Return only corrected Scene Contract JSON. Do not add prose or Markdown fences.
+"""
+
+
+def build_generation_prompt(
+    workspace_path: str | Path,
+    story_id: str,
+    chapter: int,
+    scene_contract: dict[str, Any] | None = None,
+    write_pack: str | None = None,
+) -> str:
+    """Build the model prompt from a fresh write pack and optional scene contract."""
     story_path = resolve_story_path(workspace_path, story_id)
     story_yaml = load_story_yaml(story_path)
     language = story_language(story_yaml)
     title = str(story_yaml.get("title") or story_id)
-    write_pack = load_story_context_file(story_path, "write_pack.md")
-    if not write_pack.strip():
+    if write_pack is None:
         write_pack = build_write_pack(str(workspace_path), story_id, chapter).read_text(encoding="utf-8")
 
-    prior_drafts: list[str] = []
-    for prior in range(max(1, chapter - 2), chapter):
-        draft = load_markdown_file(story_path / "drafts" / f"chapter_{prior:03d}.md")
-        if draft.strip():
-            prior_drafts.append(f"### Chapter {prior} Sample\n" + "\n".join(draft.splitlines()[:80]))
-
-    style_reference = "\n\n".join(prior_drafts) or "No prior draft sample is available."
+    accepted_reference = "No previous accepted chapter is available."
+    if chapter > 1:
+        accepted = load_markdown_file(story_path / "chapters" / f"chapter_{chapter - 1:03d}.md")
+        if accepted.strip():
+            accepted_reference = "\n".join(accepted.strip().splitlines()[-40:])
+    contract_text = json.dumps(scene_contract, ensure_ascii=False, indent=2) if scene_contract else "No scene contract supplied."
     heading = chapter_heading(chapter, language)
     return f"""You are drafting a fiction chapter for "{title}".
 
@@ -108,10 +156,13 @@ Task: write chapter {chapter} in {language}.
 ## Write Pack
 {write_pack}
 
-## Prior Draft Style Reference
-Use these samples only for local voice continuity. Do not copy sentences.
+## Validated Scene Contract
+{contract_text}
 
-{style_reference}
+## Previous Accepted Chapter Ending [SOURCE_TEXT]
+Use this only for immediate state and local voice continuity. Do not copy its sentences.
+
+{accepted_reference}
 
 ## Draft Requirements
 - Follow the story language exactly: {language}.
@@ -121,6 +172,7 @@ Use these samples only for local voice continuity. Do not copy sentences.
 - Do not make canon changes.
 - Write a sequence of lived events in finished novel prose, not a plot summary, outline, canon explanation, or reviewer response.
 - Each scene must have an immediate goal, resistance, a concrete action or choice, and a visible change in the situation.
+- Follow the validated scene contract in order. Do not invent scenes that bypass its required change or forbidden reveals.
 - Use close point of view: show only what the viewpoint character perceives, remembers, infers, or physically does. Let the reader infer themes and psychology from evidence.
 - Use specific objects, positioning, interruptions, incomplete answers, socially constrained dialogue, and selective sensory details. Dialogue must pursue a character's immediate goal and change pressure or relationship.
 - Do not label character traits, emotional states, themes, symbolism, or relationship dynamics in narration when observable behavior can show them.
@@ -135,6 +187,39 @@ Use these samples only for local voice continuity. Do not copy sentences.
 """
 
 
+def _generate_scene_contract(
+    config: dict[str, Any],
+    story_id: str,
+    chapter: int,
+    write_pack: str,
+    options: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    chain = select_model_for_stage(config, "scene_planning", fallback_stage="chapter_generation")
+    result = attempt_model_chain(build_scene_contract_prompt(story_id, chapter, write_pack), chain, config, options)
+    if not result.get("ok"):
+        raise RuntimeError(f"scene planning failed for all configured models: {result.get('attempts', [])}")
+
+    text = str(result.get("text", ""))
+    try:
+        return parse_scene_contract(text, story_id, chapter), result
+    except ValueError as first_error:
+        repair = attempt_model_chain(
+            _scene_contract_repair_prompt(story_id, chapter, text, str(first_error)),
+            chain,
+            config,
+            options,
+        )
+        combined_attempts = [*result.get("attempts", []), *repair.get("attempts", [])]
+        if not repair.get("ok"):
+            raise RuntimeError(f"scene contract repair failed for all configured models: {combined_attempts}")
+        try:
+            contract = parse_scene_contract(str(repair.get("text", "")), story_id, chapter)
+        except ValueError as second_error:
+            raise RuntimeError(f"scene contract remained invalid after one repair: {second_error}") from second_error
+        repair["attempts"] = combined_attempts
+        return contract, repair
+
+
 def generate_draft(
     workspace_path: str | Path,
     story_id: str,
@@ -147,7 +232,10 @@ def generate_draft(
     story_yaml = load_story_yaml(story_path)
     config = load_config(config_path)
     require_explicit_runtime_config(config, "chapter generation")
-    prompt = build_generation_prompt(workspace_path, story_id, chapter)
+    write_pack_path = build_write_pack(str(workspace_path), story_id, chapter)
+    write_pack = write_pack_path.read_text(encoding="utf-8")
+    scene_contract, planning_result = _generate_scene_contract(config, story_id, chapter, write_pack, options)
+    prompt = build_generation_prompt(workspace_path, story_id, chapter, scene_contract, write_pack)
     chain = select_model_for_stage(config, "chapter_generation")
     result = attempt_model_chain(prompt, chain, config, options)
     if not result.get("ok"):
@@ -156,6 +244,10 @@ def generate_draft(
 
     heading = chapter_heading(chapter, story_language(story_yaml))
     draft_text = normalize_generated_draft(str(result.get("text", "")), heading)
+    run_id = str(uuid4())
+    contract_path = story_path / "runs" / f"chapter_{chapter:03d}" / run_id / "scene_contract.json"
+    assert_story_write_allowed(contract_path, story_path)
+    safe_write_file(contract_path, json.dumps(scene_contract, ensure_ascii=False, indent=2) + "\n", story_path)
     output_path = story_path / "drafts" / f"chapter_{chapter:03d}.md"
     assert_story_write_allowed(output_path, story_path)
     saved_path = safe_write_file(output_path, draft_text + "\n", story_path)
@@ -163,9 +255,23 @@ def generate_draft(
         story_path,
         chapter,
         "generation",
-        result,
+        {
+            "model_profile": result.get("model_profile"),
+            "attempts": [*planning_result.get("attempts", []), *result.get("attempts", [])],
+        },
         config,
-        {"draft": str(saved_path.relative_to(story_path))},
+        {
+            "draft": str(saved_path.relative_to(story_path)),
+            "scene_contract": str(contract_path.relative_to(story_path)),
+            "write_pack": str(write_pack_path.relative_to(story_path)),
+        },
+        {
+            "run_id": run_id,
+            "stages": [
+                {"name": "scene_planning", "model_profile": planning_result.get("model_profile")},
+                {"name": "chapter_generation", "model_profile": result.get("model_profile")},
+            ],
+        },
     )
     return saved_path
 

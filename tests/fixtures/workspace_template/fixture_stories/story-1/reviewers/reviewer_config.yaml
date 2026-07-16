@@ -4,3 +4,28 @@ standard_reviewers:
     can_block_gate: true
     provider_group: mock_first
     intelligence: medium
+  reveal_lock:
+    enabled: true
+    can_block_gate: true
+    provider_group: mock_first
+    intelligence: medium
+  editor:
+    enabled: true
+    can_block_gate: true
+    provider_group: mock_first
+    intelligence: medium
+  pacing:
+    enabled: true
+    can_block_gate: true
+    provider_group: mock_first
+    intelligence: medium
+  tone:
+    enabled: true
+    can_block_gate: true
+    provider_group: mock_first
+    intelligence: medium
+  character:
+    enabled: true
+    can_block_gate: true
+    provider_group: mock_first
+    intelligence: medium

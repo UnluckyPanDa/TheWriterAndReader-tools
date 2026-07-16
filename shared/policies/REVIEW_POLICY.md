@@ -68,6 +68,15 @@ issue blocked, the writer must rewrite before the gate can clear.
 ## Gate Rule
 
 A chapter may pass the review gate only when all enabled blocking reviewers are
-clear or explicitly disabled in config. Pending canon updates, reveal-lock
-breaks, entity alias drift, or series continuity conflicts should remain visible
-in the gate result until resolved.
+clear. Non-required reviewers may be explicitly disabled in config. Pending
+canon updates, reveal-lock breaks, entity alias drift, or series continuity
+conflicts should remain visible in the gate result until resolved.
+
+Final chapter acceptance also requires these standard dimensions:
+
+- Correctness: `continuity` and `reveal_lock`.
+- Novelness: `editor`, `pacing`, `tone`, and `character`.
+
+Missing, disabled, malformed, or nonblocking required reviewers may still
+produce partial diagnostics, but the chapter gate remains incomplete and cannot
+accept the chapter.

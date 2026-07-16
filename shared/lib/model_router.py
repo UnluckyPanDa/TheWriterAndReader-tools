@@ -37,10 +37,16 @@ def get_fallback_chain(config: dict[str, Any], provider_group: str) -> list[dict
     return chain
 
 
-def select_model_for_stage(config: dict[str, Any], stage_name: str) -> list[dict[str, Any]]:
-    """Select the fallback model chain for a writing stage."""
+def select_model_for_stage(
+    config: dict[str, Any],
+    stage_name: str,
+    fallback_stage: str | None = None,
+) -> list[dict[str, Any]]:
+    """Select a writing-stage chain, optionally using a compatible stage."""
     stages = config.get("writing_stages", {})
     stage = stages.get(stage_name)
+    if not isinstance(stage, dict) and fallback_stage:
+        stage = stages.get(fallback_stage)
     if not isinstance(stage, dict):
         raise ValueError(f"Unknown writing stage: {stage_name}")
     provider_group = stage.get("provider_group")
@@ -117,6 +123,28 @@ def attempt_model_chain(
 def _mock_response(prompt: str) -> str:
     """Return deterministic text for tests and offline development."""
     lower = prompt.lower()
+    if "scene contract json" in lower:
+        story_match = re.search(r"^story_id:\s*([^\s]+)$", prompt, re.MULTILINE)
+        chapter_match = re.search(r"^chapter:\s*(\d+)$", prompt, re.MULTILINE)
+        story_id = story_match.group(1) if story_match else "story-1"
+        chapter = int(chapter_match.group(1)) if chapter_match else 1
+        return (
+            '{"schema_version":1,"story_id":"'
+            + story_id
+            + '","chapter":'
+            + str(chapter)
+            + ',"scenes":[{"scene_id":"scene-1","viewpoint_character":"protagonist",'
+            '"starting_state":"The immediate problem is unresolved.",'
+            '"immediate_goal":"Resolve the chapter task.",'
+            '"pressure":"Delay will increase the cost.",'
+            '"opposition":"The situation resists an easy solution.",'
+            '"change_axes":["commitment"],'
+            '"required_change":"The protagonist makes a binding choice.",'
+            '"physical_setting":"The active chapter location.",'
+            '"active_characters":["protagonist"],'
+            '"required_beats":["The protagonist acts under pressure."],'
+            '"forbidden_reveals":[],"ending_turn":"The choice creates forward pressure."}]}'
+        )
     if "review report" in lower or "reviewer" in lower or "review pack" in lower:
         reviewer_ids = re.findall(r"^reviewer_id:\s*([^\s]+)$", prompt, re.MULTILINE)
         reviewer_id = reviewer_ids[-1] if reviewer_ids else "mock_reviewer"

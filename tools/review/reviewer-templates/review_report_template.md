@@ -1,31 +1,33 @@
 # Review Report
-reviewer_id:
-reviewer_type: standard | series | special
-story_id:
-chapter:
-draft_file:
-date:
+reviewer_id: {reviewer_id}
+reviewer_type: {reviewer_type}
+story_id: {story_id}
+chapter: {chapter}
 status: pass | pass_with_minor_issues | needs_revision | blocked
 ## Summary
+State the reader-facing verdict in 2-4 sentences.
+## Evidence
+- Location: scene, paragraph, or short quoted phrase
+  Observation: what the draft does there
+  Reader effect: why it works or harms the chapter
 ## Severity Counts
-- blocker:
-- major:
-- minor:
-- note:
+- blocker: 0
+- major: 0
+- minor: 0
+- note: 0
 ## Issues
 ### Issue R001
-severity:
+issue_type: continuity | reveal_timing | character_consistency | relationship_addressing | language_clarity | tone | viewpoint | repetition | summary_instead_of_scene | exposition_overload | emotional_overexplanation | weak_dialogue | rhythm_monotony | source_wording_reuse | planning_language_leak | pacing_local | pacing_scene | pacing_chapter | weak_transition | weak_hook | other
+severity: blocker | major | minor | note
 location:
-quote:
-problem:
-why_it_matters:
+observation:
+reader_effect:
+review_scope: local | scene | chapter
 rewrite_required: yes | no
-writer_response_allowed: yes | no
+rewrite_scope: none | sentence | paragraph | scene | chapter
 suggested_fix:
-affected_files:
-canon_update_needed: yes | no
 ## Rewrite Recommendation
-rewrite_required:
+rewrite_required: yes | no
 rewrite_scope: none | sentence | paragraph | scene | chapter
 ## Gate Recommendation
 gate_status: accept | revise | block
