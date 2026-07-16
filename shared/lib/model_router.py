@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from shared.lib.config_loader import resolve_model_profile
@@ -71,7 +72,6 @@ def attempt_model_chain(
     options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Attempt a prompt against a model chain until one provider succeeds."""
-    del config
     options = options or {}
     attempts: list[dict[str, Any]] = []
 
@@ -81,8 +81,13 @@ def attempt_model_chain(
         provider_config = model_profile.get("provider_config", {})
         provider_type = provider_config.get("type") if isinstance(provider_config, dict) else None
 
-        if provider_type == "mock" or provider_name == "mock":
-            result = {"ok": True, "text": _mock_response(prompt), "reason": None}
+        if not isinstance(provider_config, dict) or not provider_config.get("enabled", False):
+            result = {"ok": False, "text": "", "reason": "provider_disabled"}
+        elif provider_type == "mock" or provider_name == "mock":
+            if config.get("allow_mock", False):
+                result = {"ok": True, "text": _mock_response(prompt), "reason": None}
+            else:
+                result = {"ok": False, "text": "", "reason": "mock_provider_disabled"}
         elif provider_type == "local_cli":
             result = run_local_cli_model(provider_config, model_profile, prompt, options)
         elif provider_type == "online_openai_compatible":
@@ -113,8 +118,10 @@ def _mock_response(prompt: str) -> str:
     """Return deterministic text for tests and offline development."""
     lower = prompt.lower()
     if "review report" in lower or "reviewer" in lower or "review pack" in lower:
-        return """# Review Report
-reviewer_id: mock_reviewer
+        reviewer_ids = re.findall(r"^reviewer_id:\s*([^\s]+)$", prompt, re.MULTILINE)
+        reviewer_id = reviewer_ids[-1] if reviewer_ids else "mock_reviewer"
+        return f"""# Review Report
+reviewer_id: {reviewer_id}
 reviewer_type: mock
 story_id: story-1
 chapter: 1
@@ -122,6 +129,10 @@ draft_file: mock
 status: pass
 ## Summary
 The draft is coherent for the provided context.
+## Evidence
+- Location: opening paragraph
+  Observation: the draft establishes the immediate situation.
+  Reader effect: the scene is readable in this test fixture.
 ## Severity Counts
 - blocker: 0
 - major: 0

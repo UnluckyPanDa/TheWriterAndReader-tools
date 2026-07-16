@@ -1,0 +1,12 @@
+id: optimizer.context
+version: 0.1.0
+name: Optimize Execution Context
+prompt_assets:
+  compress_context_for_goal: prompt.context.compress_for_goal
+runtime_order:
+  - normalize_input
+  - filter_forbidden_context
+  - rank_context
+  - deduplicate_context
+  - compress_context_for_goal
+  - pack_context

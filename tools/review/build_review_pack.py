@@ -6,10 +6,12 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+from shared.lib.chapter_context import load_chapter_inputs
 from shared.lib.path_rules import assert_story_write_allowed
 from shared.lib.safe_write import safe_write_file
 from shared.lib.story_loader import load_markdown_file, load_story_context_file, load_story_yaml
 from shared.lib.workspace_loader import resolve_story_path
+from tools.writing.build_write_pack import build_write_pack
 
 
 def _value_as_text(value: Any) -> str:
@@ -42,9 +44,11 @@ def build_review_pack(
     story_yaml = load_story_yaml(story_path)
     draft_path = story_path / "drafts" / f"chapter_{chapter:03d}.md"
     draft = load_markdown_file(draft_path)
+    build_write_pack(str(workspace_path), story_id, chapter)
     write_pack = load_story_context_file(story_path, "write_pack.md")
     reveal_lock = load_markdown_file(story_path / "storyline" / "reveal_lock.md")
     reviewer_config = load_markdown_file(story_path / "reviewers" / "reviewer_config.yaml")
+    chapter_inputs = load_chapter_inputs(story_path, chapter)
 
     content = f"""# Review Pack
 
@@ -59,6 +63,18 @@ def build_review_pack(
 ## Draft Under Review
 {_required_text(draft, "draft")}
 
+## Active Chapter Brief
+{chapter_inputs["brief"]}
+
+## Active Chapter Context
+{chapter_inputs["context"]}
+
+## Active Chapter Generation Instruction
+{chapter_inputs["instruction"]}
+
+## Previous Accepted Review Handoff
+{chapter_inputs["previous_handoff"]}
+
 ## Write Pack Reference
 {_required_text(write_pack, "write pack")}
 
@@ -71,6 +87,9 @@ def build_review_pack(
 ## Review Requirements
 - Review the draft against the supplied story context.
 - Identify blocker and major issues before minor polish.
+- Evaluate novel quality as well as continuity: scene dramatization, causal pressure, close point of view, character choice, prose precision, and ending impact.
+- Every issue must cite a specific scene, paragraph, or short quotation and explain why it affects the reader.
+- A pass must be based on the supplied text. Do not issue a generic approval.
 - Do not edit canon or draft files.
 - Use the standard review report shape.
 - Include clear gate guidance: accept, revise, or block.

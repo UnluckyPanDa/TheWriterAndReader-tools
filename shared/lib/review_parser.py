@@ -29,10 +29,13 @@ def has_required_major_rewrite(text: str) -> bool:
 
 
 def recommended_gate_status(text: str) -> str:
-    """Derive a gate status from combined review text."""
+    """Derive a fail-closed gate status from an evidence-bearing review report."""
     lowered = text.lower()
     if "status: blocked" in lowered or "severity: blocker" in lowered:
         return "blocked"
-    if has_required_major_rewrite(text):
+    counts = count_severities(text)
+    if "status: needs_revision" in lowered or "gate_status: revise" in lowered or counts["major"]:
         return "revise"
-    return "accepted"
+    if "status: pass" in lowered and "gate_status: accept" in lowered and "## evidence" in lowered:
+        return "accepted"
+    return "blocked"

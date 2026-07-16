@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 
-from cli.commands import config, doctor, publish, review, wizard, write
+TOOLS_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(TOOLS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOLS_REPO_ROOT))
+
+from cli.commands import config, doctor, publish, review, web, wizard, write
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -17,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     review.register(subparsers)
     publish.register(subparsers)
     wizard.register(subparsers)
+    web.register(subparsers)
     return parser
 
 

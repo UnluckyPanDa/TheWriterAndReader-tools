@@ -1,8 +1,40 @@
+---
+name: twr-writing-tool
+description: "Use for TheWriterAndReader story drafting work in any installed Codex project: generating, continuing, refining, rewriting, explaining review issues, updating handoff, or promoting accepted drafts through the `twr write` workflow. Use when the request mentions TWR writing, story drafting, chapter drafting, write packs, or this skill by name."
+---
+
 # TWR Writing Tool Skill
+
 ## Purpose
-Use this skill when the user asks to generate, continue, refine, rewrite, or explain a story draft.
-This skill is the entry point for the writing tools. It does not contain story-specific writing rules. It must read the selected workspace, story config, writer profile, context pack, and model routing config before acting.
+
+Use this skill as the thin entry point for TheWriterAndReader writing tools.
+Do not store story-specific writing rules in the skill. Load the selected
+workspace, story config, writer profile, context pack, and model routing config
+before acting.
+
+## Workspace Resolution
+
+1. If the user provides `--workspace`, a path, or a project root, use that
+   workspace.
+2. Otherwise, if the current project contains `workspace.yaml`, use the current
+   project root as the workspace.
+3. Otherwise, search upward from the current directory for `workspace.yaml`.
+4. If no workspace is clear, ask for the workspace path before writing files.
+5. Never use the TheWriterAndReader tools repository itself as the story
+   workspace unless the user explicitly says it is a workspace and it contains
+   `workspace.yaml`.
+
+Use explicit command arguments after resolution:
+
+```bash
+twr write <action> --workspace <workspace> --story <story-id> --chapter <chapter>
+```
+
+If `twr` is not on `PATH`, report that the shared CLI is not installed or not on
+`PATH`; do not reimplement the command in the skill.
+
 ## Required Config Loading Order
+
 1. Load external tool config.
 2. Load workspace config.
 3. Load selected story config.
@@ -10,29 +42,34 @@ This skill is the entry point for the writing tools. It does not contain story-s
 5. Load model routing config.
 6. Build or read the current write pack.
 7. Run the requested writing command.
+
 ## Supported Actions
+
 - generate draft
 - refine draft from review
 - explain review issue once
 - update handover
 - promote accepted draft to chapter
+
 ## Safety Rules
+
 - Never edit canon directly.
 - Never edit series canon directly.
 - Never write outside the selected story folder.
 - Never guess the story path.
 - Never repeatedly reject the same reviewer issue.
 - If reviewer rejects a writer explanation, rewrite is required.
+
 ## Commands
+
+Build write pack:
+
+```bash
+twr write pack --workspace <workspace> --story <story-id> --chapter <chapter>
+```
+
 Generate draft:
+
 ```bash
 twr write draft --workspace <workspace> --story <story-id> --chapter <chapter>
-```
-Refine draft:
-```bash
-twr write refine --workspace <workspace> --story <story-id> --chapter <chapter>
-```
-Explain review issue:
-```bash
-twr write explain --workspace <workspace> --story <story-id> --chapter <chapter> --issue <issue-id>
 ```

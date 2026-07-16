@@ -9,11 +9,10 @@ can_block_gate: true
 ## Purpose
 Check the draft against the assigned review focus and current story state.
 ## Must Check
-- canon consistency
-- chapter plan consistency
-- timeline consistency
-- character knowledge consistency
-- location/object continuity
-- no drift from current story arc
+- whether each focal character wants something immediate in the scene
+- whether choices follow from knowledge, pressure, and personality
+- whether emotion is expressed through behavior, dialogue, or a credible inner response
+- whether relationships change through an observable action or consequence
+Flag passive exposition that replaces a character decision.
 ## Output
 Use the standard review report template.

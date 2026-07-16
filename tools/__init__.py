@@ -1,1 +1,1 @@
-"""Workflow tool packages for writing, review, publish, and wizard commands."""
+"""Workflow tool packages for writing, review, publish, wizard, and local web commands."""

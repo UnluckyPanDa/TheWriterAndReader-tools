@@ -10,6 +10,7 @@ Story canon normally lives in:
 - `canon/canon.md`
 - `canon/characters.md`
 - `canon/relationships_and_names.md`
+- `canon/relationship_graph.yaml`
 - `canon/locations_objects.md`
 - `canon/hidden_truth.md`
 - `canon/visual_bible.md`

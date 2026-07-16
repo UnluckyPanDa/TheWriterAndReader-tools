@@ -7,3 +7,7 @@ Guidelines:
 - Keep schemas story-neutral.
 - Do not encode active story names, private canon, or manuscript text.
 - Add only schemas that are validated by a tool, test, or documented workflow.
+
+`relationship_graph.schema.json` defines the story-neutral character and
+relationship contract used by the wizard's local 3D relationship plot and by
+chapter context packs.

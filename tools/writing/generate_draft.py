@@ -10,6 +10,7 @@ from typing import Any
 from shared.lib.config_loader import load_config
 from shared.lib.model_router import attempt_model_chain, select_model_for_stage
 from shared.lib.path_rules import assert_story_write_allowed
+from shared.lib.run_provenance import require_explicit_runtime_config, write_run_provenance
 from shared.lib.safe_write import safe_write_file
 from shared.lib.story_loader import load_markdown_file, load_story_context_file, load_story_yaml
 from shared.lib.workspace_loader import resolve_story_path
@@ -114,10 +115,19 @@ Use these samples only for local voice continuity. Do not copy sentences.
 
 ## Draft Requirements
 - Follow the story language exactly: {language}.
-- Follow the writer voice, current canon, reveal lock, and chapter plan in the write pack.
+- Treat the canon, character files, timeline, and reveal lock as private constraints, not source prose. Use them to control truth, knowledge, desire, continuity, and forbidden reveals; do not copy or paraphrase their wording.
+- Prioritize the current chapter task, then viewpoint character desire and resistance, then concrete actions and consequences, then only the continuity facts needed for this chapter.
 - Do not reveal locked information.
 - Do not make canon changes.
-- Output prose suitable for review, not notes for the reviewer.
+- Write a sequence of lived events in finished novel prose, not a plot summary, outline, canon explanation, or reviewer response.
+- Each scene must have an immediate goal, resistance, a concrete action or choice, and a visible change in the situation.
+- Use close point of view: show only what the viewpoint character perceives, remembers, infers, or physically does. Let the reader infer themes and psychology from evidence.
+- Use specific objects, positioning, interruptions, incomplete answers, socially constrained dialogue, and selective sensory details. Dialogue must pursue a character's immediate goal and change pressure or relationship.
+- Do not label character traits, emotional states, themes, symbolism, or relationship dynamics in narration when observable behavior can show them.
+- Avoid repeated canon terminology, abstract emotional labels, generic reactions, repeated gestures, and sentences that restate the previous paragraph's meaning.
+- Keep technical explanation brief and make it create conflict, risk, or a decision.
+- Begin inside an active situation. End after a concrete discovery, choice, interruption, or changed relationship; do not summarize the chapter afterward.
+- Self-revise for scene movement, specific detail, sentence rhythm, emotional causality, and repetition before returning the draft.
 - Do not include meta commentary, analysis, or author notes.
 - Output only the chapter text, starting with this heading:
 
@@ -136,6 +146,7 @@ def generate_draft(
     story_path = resolve_story_path(workspace_path, story_id)
     story_yaml = load_story_yaml(story_path)
     config = load_config(config_path)
+    require_explicit_runtime_config(config, "chapter generation")
     prompt = build_generation_prompt(workspace_path, story_id, chapter)
     chain = select_model_for_stage(config, "chapter_generation")
     result = attempt_model_chain(prompt, chain, config, options)
@@ -147,7 +158,16 @@ def generate_draft(
     draft_text = normalize_generated_draft(str(result.get("text", "")), heading)
     output_path = story_path / "drafts" / f"chapter_{chapter:03d}.md"
     assert_story_write_allowed(output_path, story_path)
-    return safe_write_file(output_path, draft_text + "\n", story_path)
+    saved_path = safe_write_file(output_path, draft_text + "\n", story_path)
+    write_run_provenance(
+        story_path,
+        chapter,
+        "generation",
+        result,
+        config,
+        {"draft": str(saved_path.relative_to(story_path))},
+    )
+    return saved_path
 
 
 def main(argv: list[str] | None = None) -> int:

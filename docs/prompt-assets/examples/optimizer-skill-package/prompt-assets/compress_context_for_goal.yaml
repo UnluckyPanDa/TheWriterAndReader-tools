@@ -1,0 +1,35 @@
+id: prompt.context.compress_for_goal
+version: 0.1.0
+name: Compress Context for Goal
+description: >
+  Compress context while preserving information required to satisfy a goal.
+inputs:
+  goal:
+    type: string
+  context_chunk:
+    type: string
+  preservation_rules:
+    type: array
+output:
+  format: json
+  schema: compressed_context_result
+template:
+  system: |
+    You compress context for downstream AI execution.
+    Preserve facts, constraints, entities, dates, numbers, and decisions.
+  user: |
+    Goal:
+    {{goal}}
+    Context:
+    {{context_chunk}}
+    Preservation rules:
+    {{preservation_rules}}
+response_schema:
+  compressed_text: string
+  preserved_facts: array
+  removed_details: array
+  confidence: number
+optimization:
+  max_input_tokens: 6000
+  target_output_tokens: 1200
+  allow_lossy_compression: true

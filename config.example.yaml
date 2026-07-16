@@ -38,11 +38,12 @@ fallback_chains:
     - mock_writer
   local_first:
     - local_writer
-    - mock_writer
   local_first_with_online_fallback:
     - local_writer
     - online_writer
-    - mock_writer
+  online_allowed:
+    - local_writer
+    - online_writer
   online_only_high_accuracy:
     - online_writer
 writing_stages:

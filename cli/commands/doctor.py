@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+TOOLS_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 def _run(args: argparse.Namespace) -> int:
     from shared.lib.config_loader import load_config, validate_config
@@ -13,7 +15,7 @@ def _run(args: argparse.Namespace) -> int:
 
     issues = []
     issues.extend(validate_config(load_config(args.config)))
-    issues.extend(assert_tools_repo_has_no_story_content(Path.cwd()))
+    issues.extend(assert_tools_repo_has_no_story_content(TOOLS_REPO_ROOT))
     if args.workspace:
         issues.extend(validate_workspace_path(args.workspace))
         issues.extend(assert_workspace_has_no_tool_code(args.workspace))

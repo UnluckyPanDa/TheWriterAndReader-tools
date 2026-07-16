@@ -9,11 +9,8 @@ can_block_gate: true
 ## Purpose
 Check the draft against the assigned review focus and current story state.
 ## Must Check
-- canon consistency
-- chapter plan consistency
-- timeline consistency
-- character knowledge consistency
-- location/object continuity
-- no drift from current story arc
+- forms of address, family roles, and social distance in dialogue
+- whether dialogue pressure fits each relationship and changes through the scene
+- relationship assumptions that the text has not earned
 ## Output
 Use the standard review report template.

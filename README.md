@@ -22,6 +22,88 @@ Real config belongs outside this repository at:
 
 Use `config.example.yaml` as the import/export shape. Online providers are disabled in the example until the user explicitly enables them.
 
+## Wizard Scaffolds
+
+Create external workspace/story/series scaffolds with:
+
+```text
+twr wizard workspace init --workspace /path/to/workspace --workspace-id my-workspace
+twr wizard story add --workspace /path/to/workspace --story story-1 --title "Story One" --language en
+twr wizard series add --workspace /path/to/workspace --series series-1 --title "Series One"
+```
+
+Wizard commands refuse to overwrite existing workspace, story, or series targets.
+
+New story scaffolds include `canon/relationship_graph.yaml`. For an existing
+story, initialize the graph explicitly, edit its character and relationship
+records, then build a self-contained local 3D viewer:
+
+```text
+twr wizard relation-plot init --workspace /path/to/workspace --story story-1
+twr wizard relation-plot build --workspace /path/to/workspace --story story-1
+```
+
+The viewer is written to
+`stories/<story-id>/build/relation-plot/index.html`. It supports rotation,
+zooming, search, group and relationship filters, chapter visibility, and graph
+selection, neighborhood focus, and PNG export without loading scripts or story
+data from the internet.
+
+## Local Web GUI
+
+Launch the local tools control room with an optional initial workspace:
+
+```text
+twr web --workspace /path/to/workspace
+```
+
+The GUI opens on `http://127.0.0.1:8765/` and can initialize workspaces, add
+stories and series, build writing/review/publish packs, generate drafts, run
+reviewers, validate configuration, and build or open the 3D relationship plot.
+Configuration path, validation, import, and export operations are also
+available. Its Reader section provides chapter reading with `[[wiki_key]]`
+links into canon and storyline pages. Writing, Review, Storyline, Relations,
+Publishing, and System are separate sections; the Review section stores user
+comments per chapter. The workspace bar includes a native folder picker and a
+history of previously loaded workspaces. Theme and workspace history are saved
+in the local user settings file at `~/.config/the-writer-and-reader/ui-settings.yaml`.
+The System tab also lets the user switch the interface between English and
+Traditional Chinese (`繁體中文`).
+The GUI invokes a fixed allowlist of existing tool functions and does not
+expose an arbitrary command or shell endpoint. Use `--no-open` to start the
+server without opening a browser, or `--port <port>` to select a different
+loopback port.
+
+For account login and external HTTPS access, see
+[`docs/web-auth.md`](docs/web-auth.md). The supported setup uses Supabase Auth
+for login and Tailscale Serve or Funnel for the path to the loopback server.
+
+## Story Writing and Review Skills
+
+Use `twr-writing-tool` for story drafting work and `twr-review-tool` for story
+review work. Both skills operate on an external story workspace; do not use this
+tools repository as the story workspace.
+
+Normal chapter flow:
+
+```text
+twr write pack --workspace /path/to/workspace --story story-1 --chapter 1
+twr write draft --workspace /path/to/workspace --story story-1 --chapter 1
+twr review pack --workspace /path/to/workspace --story story-1 --chapter 1
+twr review run --workspace /path/to/workspace --story story-1 --chapter 1
+```
+
+Writing reads the selected story config, writer profile, canon, storyline, prior
+context, and `context/write_pack.md`, then writes generated outputs inside the
+selected story folder. Review reads the selected story config, reviewer config,
+standard reviewers, target draft, canon, reveal lock, storyline, and
+`context/review_pack.md`, then writes review outputs inside the selected story
+folder.
+
+Neither skill may directly edit story canon, series canon, or another story's
+files. Canon-impacting findings or new facts must be recorded as proposed canon
+updates inside the selected story folder.
+
 ## Safety Defaults
 
 - Use local Ollama models first.

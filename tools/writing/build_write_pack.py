@@ -5,12 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from shared.lib.chapter_context import load_chapter_inputs
+from shared.lib.relationship_graph import relationship_graph_summary
 from shared.lib.safe_write import safe_write_file
 from shared.lib.series_loader import load_series_pack
 from shared.lib.story_loader import (
     load_markdown_file,
     load_story_canon_file,
-    load_story_context_file,
     load_story_yaml,
     load_storyline_file,
 )
@@ -84,11 +85,17 @@ def build_write_pack(
     canon = load_story_canon_file(story_path, "canon.md")
     characters = load_story_canon_file(story_path, "characters.md")
     relationships = load_story_canon_file(story_path, "relationships_and_names.md")
+    relationship_summary = relationship_graph_summary(story_path, chapter)
     locations = load_story_canon_file(story_path, "locations_objects.md")
-    chapter_plan = load_storyline_file(story_path, "chapter_plan.md")
     reveal_lock = load_storyline_file(story_path, "reveal_lock.md")
-    handover = load_story_context_file(story_path, "handover.md")
+    chapter_inputs = load_chapter_inputs(story_path, chapter)
+    chapter_plan = load_storyline_file(story_path, "chapter_plan.md")
     series_context = _load_series_context(workspace_path, story_yaml)
+    legacy_plan = (
+        _non_empty(chapter_plan, "chapter plan")
+        if chapter_inputs["has_active_direction"] == "no"
+        else "Not loaded because active chapter-specific direction is available."
+    )
 
     content = f"""# Write Pack
 
@@ -101,10 +108,29 @@ def build_write_pack(
 ## Current Task
 - Story ID: {story_id}
 - Chapter: {chapter}
-- Use the chapter plan to identify the requested scene or chapter material.
+- Active chapter direction found: {chapter_inputs["has_active_direction"]}.
+
+## Active Chapter Brief
+{chapter_inputs["brief"]}
+
+## Active Chapter Context
+{chapter_inputs["context"]}
+
+## Active Chapter Generation Instruction
+{chapter_inputs["instruction"]}
+
+## Previous Accepted Review Handoff
+{chapter_inputs["previous_handoff"]}
 
 ## Active Canon
 {_non_empty(canon, "canon")}
+
+## Canon Usage Contract
+- Canon is private factual reference, not source prose or a vocabulary list.
+- Use canon only to determine what is true, what the viewpoint character knows, what they want, what cannot happen, and what must remain unrevealed.
+- Do not copy, paraphrase, explain, or repeatedly echo canon wording in narration.
+- Include a canon fact in the chapter only when a character encounters its concrete consequence.
+- Prioritize the current chapter objective, character desire and resistance, concrete action, and consequence over wider background.
 
 ## Active Characters
 {_non_empty(characters, "character")}
@@ -112,17 +138,20 @@ def build_write_pack(
 ## Relationship and Name Rules
 {_non_empty(relationships, "relationship and name rule")}
 
+## Chapter-Visible Relationship Graph
+{relationship_summary}
+
 ## Active Locations and Objects
 {_non_empty(locations, "location and object")}
 
 ## Chapter Plan and Pacing
-{_non_empty(chapter_plan, "chapter plan")}
+{legacy_plan}
 
 ## Reveal Lock
 {_non_empty(reveal_lock, "reveal lock")}
 
 ## Previous Context and Handover
-{_non_empty(handover, "handover")}
+{chapter_inputs["global_handover"]}
 
 ## Series Context
 {series_context}
@@ -132,7 +161,16 @@ def build_write_pack(
 - Follow the writer voice and current canon.
 - Do not reveal locked information.
 - Do not make canon changes from the writing tool.
-- Output prose suitable for review, not notes for the reviewer.
+- Write a complete chapter, not a plot summary or an outline.
+- Give each scene a concrete immediate objective, pressure or obstacle, a character choice, and a visible consequence or turn.
+- Dramatize pivotal information through action, dialogue, setting, and close point of view; use exposition only when it actively changes the scene.
+- Write a sequence of lived events, not an illustrated summary of the supplied canon.
+- Reveal characterization through choices, omissions, interruptions, and specific physical behavior; do not label traits or themes in narration.
+- Keep dialogue goal-directed and socially constrained. Do not use dialogue to deliver canon or explain the plot to the reader.
+- Remove abstract emotional explanations, repeated meanings, generic reactions, and planning-language terminology before returning the draft.
+- Begin inside an active situation with immediate pressure and a specific detail that does not fit. End after a concrete discovery, choice, interruption, or changed relationship.
+- Keep emotional movement in the characters' choices and reactions. Do not end by restating the chapter's theme or plot in abstract narration.
+- Before returning the draft, revise for scene continuity, specific sensory detail, varied sentence rhythm, and avoidable repetition.
 """
 
     return safe_write_file(story_path / "context" / "write_pack.md", content, story_path)

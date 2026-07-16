@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="twr-token" content="__TWR_TOKEN__">
+  <meta name="twr-workspace" content="__TWR_WORKSPACE__">
+  <meta name="twr-auth-url" content="__TWR_AUTH_URL__">
+  <meta name="twr-auth-anon-key" content="__TWR_AUTH_ANON_KEY__">
+  <meta name="twr-auth-required" content="__TWR_AUTH_REQUIRED__">
+  <title>TWR Control Room</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <section id="authGate" class="auth-gate hidden" aria-labelledby="authTitle">
+    <div class="auth-card">
+      <p class="eyebrow">TheWriterAndReader</p>
+      <h2 id="authTitle">Sign in to Control Room</h2>
+      <p id="authDescription">Use your account to access the local TWR tools through this external session.</p>
+      <form id="authForm">
+        <label>Email<input id="authEmail" name="email" type="email" autocomplete="email" required></label>
+        <label>Password<input id="authPassword" name="password" type="password" autocomplete="current-password" minlength="6" required></label>
+        <div class="auth-actions"><button id="authSubmit" class="primary" type="submit">Sign in</button><button id="authSignup" type="button">Create account</button></div>
+      </form>
+      <button id="authReset" class="text-button" type="button">Forgot password?</button>
+      <p id="authMessage" class="field-message" role="status" aria-live="polite"></p>
+    </div>
+  </section>
+  <header class="topbar">
+    <div><p class="eyebrow">TheWriterAndReader</p><h1>Control Room</h1></div>
+    <div class="top-actions"><div class="local-badge"><span></span> Local session</div><span id="authUser" class="auth-user hidden"></span><button id="signOut" class="theme-toggle hidden" type="button">Sign out</button><button id="themeToggle" class="theme-toggle" aria-label="Toggle light and dark theme">☼ <span>Light</span></button></div>
+  </header>
+
+  <nav class="tool-tabs" aria-label="Tool sections" role="tablist">
+    <button type="button" role="tab" aria-selected="true" aria-controls="reader" data-section="reader">Reader</button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="writing" data-section="writing">Writing</button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="review" data-section="review">Review</button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="storyline" data-section="storyline">Storyline</button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="relations" data-section="relations">Relations</button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="publishing" data-section="publishing">Publishing</button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="system" data-section="system">System</button>
+  </nav>
+
+  <section class="workspace-bar" aria-label="Workspace selection">
+    <label for="workspacePath">Workspace</label>
+    <div class="workspace-input"><input id="workspacePath" autocomplete="off" placeholder="/path/to/story-workspace"><button id="chooseWorkspace" type="button">Choose folder</button><button id="loadWorkspace" class="primary">Load workspace</button></div>
+    <div class="workspace-history"><label for="workspaceHistory">Recent workspaces</label><select id="workspaceHistory"><option value="">No previous workspaces</option></select></div>
+    <p id="workspaceMessage" class="field-message">Choose an external story workspace.</p>
+  </section>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section class="side-section"><div class="section-heading"><h2>Stories</h2><span id="storyCount">0</span></div><div id="storyList" class="entity-list empty">No workspace loaded</div></section>
+      <section class="side-section"><div class="section-heading"><h2>Series</h2><span id="seriesCount">0</span></div><div id="seriesList" class="entity-list empty">No workspace loaded</div></section>
+      <section class="side-section compact"><h2>Session</h2><label>Story<select id="storySelect"><option value="">Select a story</option></select></label><label>Chapter<input id="chapter" type="number" min="1" value="1"></label><label>Config <span class="optional">optional</span><input id="configPath" placeholder="Default local config"></label></section>
+    </aside>
+
+    <div class="content">
+      <section class="hero-card"><div><p class="eyebrow">Selected story</p><h2 id="selectedTitle">Choose a workspace</h2><p id="selectedMeta">Load a workspace to inspect its stories and invoke tools.</p></div><a id="previewLink" class="preview-link hidden" target="_blank" rel="noopener">Open 3D plot</a></section>
+
+      <section id="reader" class="tool-section reader-section" role="tabpanel">
+        <div class="tool-heading"><div><p class="step">01 · READ</p><h2>Story reader</h2></div><p>Read the selected chapter and jump into canon or planning pages through wiki-style links.</p></div>
+        <div class="reader-layout">
+        <article class="reader-pane"><header><div><h3 id="readerTitle">No chapter selected</h3><small id="readerSource"></small></div><select id="readerChapter"><option value="1">Chapter 1</option></select></header><div id="readerContent" class="reader-content empty">Load a story to begin reading.</div><div class="reader-actions"><button data-action="write_pack">Write pack</button><button data-action="write_draft" class="model-action">Draft chapter</button><button data-action="review_pack">Review pack</button><button data-action="review_run" class="model-action">Run review</button><a href="#storyline" data-section-link="storyline" class="section-link">Plan storyline →</a><a href="#relations" data-section-link="relations" class="section-link">Edit relations →</a></div></article>
+          <aside class="wiki-pane"><div class="section-heading"><h3>Story wiki</h3><span id="wikiCount">0</span></div><div id="wikiList" class="wiki-list empty">No story loaded</div><div id="wikiPage" class="wiki-page hidden"><button id="closeWiki" class="text-button">← Back to wiki</button><h3 id="wikiTitle"></h3><pre id="wikiContent"></pre></div></aside>
+        </div>
+      </section>
+
+      <section id="writing" class="tool-section" role="tabpanel" hidden><div class="tool-heading"><div><p class="step">02 · WRITE</p><h2>Writing tools</h2></div><p>Build context and invoke the configured writer against the selected chapter.</p></div><div class="action-grid"><button class="action-card" data-action="write_pack"><strong>Build write pack</strong><small>Assemble canon, handoff, plan, and relationship context.</small></button><button class="action-card model-action" data-action="write_draft"><strong>Generate draft</strong><small>Run the local writer model for the selected chapter.</small></button></div></section>
+
+      <section id="review" class="tool-section" role="tabpanel" hidden><div class="tool-heading"><div><p class="step">03 · REVIEW</p><h2>Review tools</h2></div><p>Prepare review context, run configured reviewers, and record human comments.</p></div><div class="action-grid"><button class="action-card" data-action="review_pack"><strong>Build review pack</strong><small>Prepare draft, canon, reveal lock, and reviewer context.</small></button><button class="action-card model-action" data-action="review_run"><strong>Run configured review</strong><small>Invoke the review gate and save evidence in the story workspace.</small></button></div><form id="commentForm" class="inline-form" data-form-action="review_comment_add"><h3>Add user review comment</h3><div class="form-row"><label>Author<input name="author" placeholder="Your name"></label><label>Location<input name="location" placeholder="Chapter, scene, or paragraph"></label></div><label>Comment<textarea name="comment" required rows="4" placeholder="Record a reader observation, issue, or decision…"></textarea></label><button type="submit">Save review comment</button></form></section>
+
+      <section id="storyline" class="tool-section" role="tabpanel" hidden><div class="tool-heading"><div><p class="step">04 · PLAN</p><h2>Storyline</h2></div><p>Edit the selected story's planning files directly from the reader workflow.</p></div><div class="editor-toolbar"><select id="storylineFile"><option value="master_outline.md">Master outline</option><option value="part_outline.md">Part outline</option><option value="chapter_plan.md">Chapter plan</option><option value="reveal_lock.md">Reveal lock</option></select><button id="loadStoryline">Load page</button><button id="saveStoryline" class="primary">Save storyline</button></div><textarea id="storylineContent" class="editor" rows="13" placeholder="Select a story and load a storyline page."></textarea></section>
+
+      <section id="relations" class="tool-section" role="tabpanel" hidden><div class="tool-heading"><div><p class="step">05 · CONNECT</p><h2>Relations</h2></div><p>Maintain the validated relationship graph and open its interactive 3D view.</p></div><div class="editor-toolbar"><button data-action="relation_plot_init">Initialize graph</button><button data-action="relation_plot_build" class="primary">Build 3D plot</button><button id="loadRelations">Load graph</button><button id="saveRelations">Save graph</button></div><textarea id="relationsContent" class="editor code-editor" rows="13" placeholder="Load the relationship graph YAML."></textarea></section>
+
+      <section id="publishing" class="tool-section" role="tabpanel" hidden><div class="tool-heading"><div><p class="step">06 · PUBLISH</p><h2>Publishing</h2></div><p>Check the selected chapter's accepted source and review gate before publishing.</p></div><button class="action-card" data-action="publish_pack"><strong>Build publish pack</strong><small>Prepare publish context and source warnings.</small></button></section>
+
+      <section id="system" class="tool-section" role="tabpanel" hidden><div class="tool-heading"><div><p class="step">07 · SYSTEM</p><h2>System and setup</h2></div><p>Manage workspace scaffolds and validate local configuration.</p></div><div class="tool-card user-settings"><h3>User settings</h3><label>Language<select id="languageSelect"><option value="en">English</option><option value="zh-Hant">繁體中文</option></select></label></div><div class="card-grid"><form class="tool-card" data-form-action="workspace_init"><h3>Initialize workspace</h3><label>Workspace ID<input name="workspace_id" required placeholder="my-workspace"></label><button type="submit">Initialize</button></form><form class="tool-card" data-form-action="story_add"><h3>Add story</h3><label>Story ID<input name="story" required placeholder="story-1"></label><label>Title<input name="title" required placeholder="Story title"></label><label>Language<input name="language" required value="en"></label><button type="submit">Add story</button></form><form class="tool-card" data-form-action="series_add"><h3>Add series</h3><label>Series ID<input name="series" required placeholder="series-1"></label><label>Title<input name="title" required placeholder="Series title"></label><button type="submit">Add series</button></form></div><div class="system-actions"><button data-action="config_validate">Validate config</button><button data-action="config_path">Show config path</button><button data-action="doctor">Run doctor</button></div><details class="config-tools"><summary>Import or export configuration</summary><form data-form-action="config_export"><label>Destination<input name="output" required placeholder="/path/to/config-export.yaml"></label><label>Mode<select name="mode"><option value="no-secrets">No secrets</option><option value="full-with-secrets">Include secrets</option></select></label><button type="submit">Export config</button></form><form data-form-action="config_import"><label>Source<input name="input" required placeholder="/path/to/config.yaml"></label><label>Target <span class="optional">optional</span><input name="target" placeholder="Default config path"></label><button type="submit">Import config</button></form></details></section>
+
+      <section class="activity-section"><div class="section-heading"><h2>Activity</h2><button id="clearActivity" class="text-button">Clear</button></div><div id="activity" class="activity empty">Tool results will appear here.</div></section>
+    </div>
+  </main>
+  <div id="busy" class="busy hidden" role="status" aria-live="polite"><span></span><div><strong>Tool running</strong><small id="busyText">Please wait…</small></div></div>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -9,11 +9,8 @@ can_block_gate: false
 ## Purpose
 Check the draft against the assigned review focus and current story state.
 ## Must Check
-- canon consistency
-- chapter plan consistency
-- timeline consistency
-- character knowledge consistency
-- location/object continuity
-- no drift from current story arc
+- spelling and stability of names, labels, and recurring objects
+- whether a new label appears with enough scene context to be memorable
+- accidental synonym drift that changes a known fact or object state
 ## Output
 Use the standard review report template.

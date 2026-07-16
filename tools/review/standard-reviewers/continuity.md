@@ -9,11 +9,10 @@ can_block_gate: true
 ## Purpose
 Check the draft against the assigned review focus and current story state.
 ## Must Check
-- canon consistency
-- chapter plan consistency
-- timeline consistency
-- character knowledge consistency
-- location/object continuity
-- no drift from current story arc
+- event order, elapsed time, and current chapter direction
+- character knowledge limits and durable object/location state
+- causality between the prior accepted handoff and this chapter's consequence
+- contradictions that a reader can detect from adjacent chapters
+For every issue, cite the scene and name the conflicting fact.
 ## Output
 Use the standard review report template.
