@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -123,6 +124,33 @@ def attempt_model_chain(
 def _mock_response(prompt: str) -> str:
     """Return deterministic text for tests and offline development."""
     lower = prompt.lower()
+    if "scene skeleton json" in lower:
+        story_match = re.search(r"^story_id:\s*([^\s]+)$", prompt, re.MULTILINE)
+        chapter_match = re.search(r"^chapter:\s*(\d+)$", prompt, re.MULTILINE)
+        scene_ids = re.findall(r'"scene_id":\s*"([^"]+)"', prompt)
+        story_id = story_match.group(1) if story_match else "story-1"
+        chapter = int(chapter_match.group(1)) if chapter_match else 1
+        scenes = [
+            {
+                "scene_id": scene_id,
+                "purpose": "Force a binding choice under pressure.",
+                "entry_condition": "The immediate problem remains unresolved.",
+                "action_sequence": ["The protagonist enters the active situation.", "The protagonist chooses to act."],
+                "conflict_escalation": ["Delay increases the cost."],
+                "emotional_turns": ["Hesitation gives way to commitment."],
+                "exit_condition": "The choice creates forward pressure.",
+            }
+            for scene_id in dict.fromkeys(scene_ids or ["scene-1"])
+        ]
+        return json.dumps(
+            {
+                "schema_version": 1,
+                "story_id": story_id,
+                "chapter": chapter,
+                "scenes": scenes,
+            },
+            separators=(",", ":"),
+        )
     if "scene contract json" in lower:
         story_match = re.search(r"^story_id:\s*([^\s]+)$", prompt, re.MULTILINE)
         chapter_match = re.search(r"^chapter:\s*(\d+)$", prompt, re.MULTILINE)
@@ -176,6 +204,13 @@ gate_status: accept
 None.
 ## Reviewer Notes
 Mock review completed."""
+    if "polish this fiction chapter" in lower:
+        heading_match = re.search(r"^(# (?:Chapter\s+\d+|第.+章))$", prompt, re.MULTILINE)
+        heading = heading_match.group(1) if heading_match else "# Chapter 1"
+        return (
+            f"{heading}\n\nThe protagonist stepped into the active situation and chose action. "
+            "The immediate goal was reached, and the choice created a larger obligation."
+        )
     if "draft" in lower or "write the requested chapter" in lower or "chapter" in lower:
         return (
             "The morning opened with a quiet decision. The protagonist stepped into the "

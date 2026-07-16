@@ -63,6 +63,11 @@ Each proposed canon update must include:
   profile, language settings, and the active chapter plan.
 - Validate a scene contract with a concrete pressure and state change before
   generating chapter prose.
+- Build a compact scene skeleton from the validated contract before generating
+  finished prose.
+- Keep first-draft generation separate from compression and voice polish.
+  Polishing must preserve events, decisions, reveals, scene order, and ending
+  turns.
 - Do not reveal hidden truths before the reveal lock allows them.
 - Use the point of view, names, titles, and forms of address that are valid for
   the current chapter.

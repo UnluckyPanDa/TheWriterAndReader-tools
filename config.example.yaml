@@ -51,9 +51,17 @@ writing_stages:
     intelligence: high
     creativity: medium
     provider_group: local_first_with_online_fallback
+  scene_skeleton:
+    intelligence: high
+    creativity: medium
+    provider_group: local_first_with_online_fallback
   chapter_generation:
     intelligence: high
     creativity: high
+    provider_group: local_first_with_online_fallback
+  prose_polish:
+    intelligence: medium
+    creativity: medium
     provider_group: local_first_with_online_fallback
   issue_explanation:
     intelligence: high

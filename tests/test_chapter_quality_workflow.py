@@ -9,11 +9,12 @@ from unittest.mock import patch
 
 from shared.lib.review_parser import recommended_gate_status, validate_review_report
 from shared.lib.scene_contract import parse_scene_contract
+from shared.lib.scene_skeleton import parse_scene_skeleton
 from tools.review.build_review_pack import build_review_pack
 from tools.review.run_review import _novelness_status, run_review
 from tools.publish.build_publish_pack import build_publish_pack
 from tools.writing.build_write_pack import build_write_pack
-from tools.writing.generate_draft import build_generation_prompt, generate_draft
+from tools.writing.generate_draft import build_generation_prompt, build_polish_prompt, generate_draft
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -118,6 +119,42 @@ class ChapterQualityWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid scene contract"):
             parse_scene_contract(json.dumps(valid), "story-1", 1)
 
+    def test_scene_skeleton_must_match_contract_order(self) -> None:
+        skeleton = {
+            "schema_version": 1,
+            "story_id": "story-1",
+            "chapter": 1,
+            "scenes": [
+                {
+                    "scene_id": "scene-1",
+                    "purpose": "Force a choice.",
+                    "entry_condition": "The answer is unavailable.",
+                    "action_sequence": ["The protagonist asks for the answer."],
+                    "conflict_escalation": ["The witness refuses."],
+                    "emotional_turns": ["Certainty gives way to doubt."],
+                    "exit_condition": "The refusal creates a new obligation.",
+                }
+            ],
+        }
+
+        self.assertEqual(parse_scene_skeleton(json.dumps(skeleton), "story-1", 1, ["scene-1"]), skeleton)
+        with self.assertRaisesRegex(ValueError, "must match the scene contract in order"):
+            parse_scene_skeleton(json.dumps(skeleton), "story-1", 1, ["scene-2"])
+
+    def test_polish_prompt_forbids_plot_changes(self) -> None:
+        prompt = build_polish_prompt(
+            "story-1",
+            1,
+            "en",
+            "# Chapter 1",
+            {"scenes": []},
+            "# Chapter 1\n\nFirst draft.",
+        )
+
+        self.assertIn("Do not add plot facts", prompt)
+        self.assertIn("Remove repeated meanings", prompt)
+        self.assertIn("Keep the chapter heading exactly", prompt)
+
     def test_model_backed_generation_requires_explicit_config(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = self.copy_workspace(temp_dir)
@@ -162,7 +199,7 @@ gate_status: accept
 """
         self.assertIn("evidence reader effect", validate_review_report(report, "editor"))
 
-    def test_mock_generation_writes_validated_scene_contract_history(self) -> None:
+    def test_mock_generation_writes_multi_pass_artifacts_and_history(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = self.copy_workspace(temp_dir)
             story = workspace / "fixture_stories" / "story-1"
@@ -172,9 +209,17 @@ gate_status: accept
 
             provenance = json.loads((story / "runs" / "chapter_001_generation.json").read_text(encoding="utf-8"))
             contract_path = story / provenance["outputs"]["scene_contract"]
+            skeleton_path = story / provenance["outputs"]["scene_skeleton"]
+            first_draft_path = story / provenance["outputs"]["first_draft"]
             contract = json.loads(contract_path.read_text(encoding="utf-8"))
+            skeleton = json.loads(skeleton_path.read_text(encoding="utf-8"))
             self.assertEqual(contract["chapter"], 1)
-            self.assertEqual([stage["name"] for stage in provenance["stages"]], ["scene_planning", "chapter_generation"])
+            self.assertEqual([scene["scene_id"] for scene in skeleton["scenes"]], ["scene-1"])
+            self.assertTrue(first_draft_path.read_text(encoding="utf-8").startswith("# Chapter 1"))
+            self.assertEqual(
+                [stage["name"] for stage in provenance["stages"]],
+                ["scene_planning", "scene_skeleton", "chapter_generation", "prose_polish"],
+            )
             self.assertTrue((contract_path.parent / "generation.json").exists())
 
     def test_mock_review_writes_current_packet_and_provenance(self) -> None:

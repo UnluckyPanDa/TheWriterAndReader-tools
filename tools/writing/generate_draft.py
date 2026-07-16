@@ -14,6 +14,7 @@ from shared.lib.model_router import attempt_model_chain, select_model_for_stage
 from shared.lib.path_rules import assert_story_write_allowed
 from shared.lib.run_provenance import require_explicit_runtime_config, write_run_provenance
 from shared.lib.scene_contract import parse_scene_contract
+from shared.lib.scene_skeleton import parse_scene_skeleton
 from shared.lib.safe_write import safe_write_file
 from shared.lib.story_loader import load_markdown_file, load_story_yaml
 from shared.lib.workspace_loader import resolve_story_path
@@ -127,11 +128,62 @@ Return only corrected Scene Contract JSON. Do not add prose or Markdown fences.
 """
 
 
+def build_scene_skeleton_prompt(
+    story_id: str,
+    chapter: int,
+    scene_contract: dict[str, Any],
+) -> str:
+    """Build the compact action-planning prompt for the prose pass."""
+    return f"""Create the scene skeleton JSON for the requested fiction chapter.
+
+story_id: {story_id}
+chapter: {chapter}
+
+## Validated Scene Contract
+{json.dumps(scene_contract, ensure_ascii=False, indent=2)}
+
+## Scene Skeleton Rules
+- Return only one JSON object with schema_version, story_id, chapter, and scenes.
+- Preserve every scene_id from the contract in the same order.
+- Every scene needs purpose, entry_condition, action_sequence, conflict_escalation, emotional_turns, and exit_condition.
+- Use concrete actions, reactions, interruptions, choices, and consequences.
+- Make each action cause the next pressure or response.
+- Preserve canon, required beats, required changes, and forbidden reveals.
+- Do not write polished prose, dialogue, commentary, or Markdown fences.
+
+Return only the Scene Skeleton JSON.
+"""
+
+
+def _scene_skeleton_repair_prompt(
+    story_id: str,
+    chapter: int,
+    scene_contract: dict[str, Any],
+    invalid_text: str,
+    validation_error: str,
+) -> str:
+    return f"""Repair the Scene Skeleton JSON so it satisfies the required contract.
+
+story_id: {story_id}
+chapter: {chapter}
+validation_error: {validation_error}
+
+## Required Scene Contract
+{json.dumps(scene_contract, ensure_ascii=False, indent=2)}
+
+## Invalid Output
+{invalid_text}
+
+Return only corrected Scene Skeleton JSON. Do not add prose or Markdown fences.
+"""
+
+
 def build_generation_prompt(
     workspace_path: str | Path,
     story_id: str,
     chapter: int,
     scene_contract: dict[str, Any] | None = None,
+    scene_skeleton: dict[str, Any] | None = None,
     write_pack: str | None = None,
 ) -> str:
     """Build the model prompt from a fresh write pack and optional scene contract."""
@@ -148,6 +200,11 @@ def build_generation_prompt(
         if accepted.strip():
             accepted_reference = "\n".join(accepted.strip().splitlines()[-40:])
     contract_text = json.dumps(scene_contract, ensure_ascii=False, indent=2) if scene_contract else "No scene contract supplied."
+    skeleton_text = (
+        json.dumps(scene_skeleton, ensure_ascii=False, indent=2)
+        if scene_skeleton
+        else "No scene skeleton supplied."
+    )
     heading = chapter_heading(chapter, language)
     return f"""You are drafting a fiction chapter for "{title}".
 
@@ -158,6 +215,9 @@ Task: write chapter {chapter} in {language}.
 
 ## Validated Scene Contract
 {contract_text}
+
+## Validated Scene Skeleton
+{skeleton_text}
 
 ## Previous Accepted Chapter Ending [SOURCE_TEXT]
 Use this only for immediate state and local voice continuity. Do not copy its sentences.
@@ -173,6 +233,7 @@ Use this only for immediate state and local voice continuity. Do not copy its se
 - Write a sequence of lived events in finished novel prose, not a plot summary, outline, canon explanation, or reviewer response.
 - Each scene must have an immediate goal, resistance, a concrete action or choice, and a visible change in the situation.
 - Follow the validated scene contract in order. Do not invent scenes that bypass its required change or forbidden reveals.
+- Follow the validated scene skeleton's causal action sequence. Expand it into lived prose without copying its planning language.
 - Use close point of view: show only what the viewpoint character perceives, remembers, infers, or physically does. Let the reader infer themes and psychology from evidence.
 - Use specific objects, positioning, interruptions, incomplete answers, socially constrained dialogue, and selective sensory details. Dialogue must pursue a character's immediate goal and change pressure or relationship.
 - Do not label character traits, emotional states, themes, symbolism, or relationship dynamics in narration when observable behavior can show them.
@@ -182,6 +243,39 @@ Use this only for immediate state and local voice continuity. Do not copy its se
 - Self-revise for scene movement, specific detail, sentence rhythm, emotional causality, and repetition before returning the draft.
 - Do not include meta commentary, analysis, or author notes.
 - Output only the chapter text, starting with this heading:
+
+{heading}
+"""
+
+
+def build_polish_prompt(
+    story_id: str,
+    chapter: int,
+    language: str,
+    heading: str,
+    scene_contract: dict[str, Any],
+    first_draft: str,
+) -> str:
+    """Build a constrained compression and voice-polish prompt."""
+    return f"""Polish this fiction chapter in {language}.
+
+story_id: {story_id}
+chapter: {chapter}
+
+## Validated Scene Contract
+{json.dumps(scene_contract, ensure_ascii=False, indent=2)}
+
+## First Prose Draft
+{first_draft}
+
+## Polish Rules
+- Preserve every event, character decision, reveal boundary, scene order, and ending turn.
+- Do not add plot facts, characters, locations, objects, explanations, or dialogue exchanges.
+- Remove repeated meanings, repeated emotional labels, canon restatement, planning language, generic reactions, and explanations already shown by action or dialogue.
+- Improve viewpoint consistency, sentence-length variation, paragraph rhythm, dialogue spacing, transitions, and word repetition.
+- Keep concrete actions, consequential sensory detail, social pressure, subtext, and causal links.
+- Keep the chapter heading exactly as supplied.
+- Return only the polished chapter text, starting with this heading:
 
 {heading}
 """
@@ -220,6 +314,51 @@ def _generate_scene_contract(
         return contract, repair
 
 
+def _generate_scene_skeleton(
+    config: dict[str, Any],
+    story_id: str,
+    chapter: int,
+    scene_contract: dict[str, Any],
+    options: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    scene_ids = [str(scene["scene_id"]) for scene in scene_contract["scenes"]]
+    chain = select_model_for_stage(config, "scene_skeleton", fallback_stage="chapter_generation")
+    result = attempt_model_chain(
+        build_scene_skeleton_prompt(story_id, chapter, scene_contract),
+        chain,
+        config,
+        options,
+    )
+    if not result.get("ok"):
+        raise RuntimeError(f"scene skeleton planning failed for all configured models: {result.get('attempts', [])}")
+
+    text = str(result.get("text", ""))
+    try:
+        return parse_scene_skeleton(text, story_id, chapter, scene_ids), result
+    except ValueError as first_error:
+        repair = attempt_model_chain(
+            _scene_skeleton_repair_prompt(
+                story_id,
+                chapter,
+                scene_contract,
+                text,
+                str(first_error),
+            ),
+            chain,
+            config,
+            options,
+        )
+        combined_attempts = [*result.get("attempts", []), *repair.get("attempts", [])]
+        if not repair.get("ok"):
+            raise RuntimeError(f"scene skeleton repair failed for all configured models: {combined_attempts}")
+        try:
+            skeleton = parse_scene_skeleton(str(repair.get("text", "")), story_id, chapter, scene_ids)
+        except ValueError as second_error:
+            raise RuntimeError(f"scene skeleton remained invalid after one repair: {second_error}") from second_error
+        repair["attempts"] = combined_attempts
+        return skeleton, repair
+
+
 def generate_draft(
     workspace_path: str | Path,
     story_id: str,
@@ -235,7 +374,15 @@ def generate_draft(
     write_pack_path = build_write_pack(str(workspace_path), story_id, chapter)
     write_pack = write_pack_path.read_text(encoding="utf-8")
     scene_contract, planning_result = _generate_scene_contract(config, story_id, chapter, write_pack, options)
-    prompt = build_generation_prompt(workspace_path, story_id, chapter, scene_contract, write_pack)
+    scene_skeleton, skeleton_result = _generate_scene_skeleton(config, story_id, chapter, scene_contract, options)
+    prompt = build_generation_prompt(
+        workspace_path,
+        story_id,
+        chapter,
+        scene_contract,
+        scene_skeleton,
+        write_pack,
+    )
     chain = select_model_for_stage(config, "chapter_generation")
     result = attempt_model_chain(prompt, chain, config, options)
     if not result.get("ok"):
@@ -243,11 +390,37 @@ def generate_draft(
         raise RuntimeError(f"draft generation failed for all configured models: {attempts}")
 
     heading = chapter_heading(chapter, story_language(story_yaml))
-    draft_text = normalize_generated_draft(str(result.get("text", "")), heading)
+    first_draft = normalize_generated_draft(str(result.get("text", "")), heading)
+    polish_chain = select_model_for_stage(config, "prose_polish", fallback_stage="chapter_generation")
+    polish_result = attempt_model_chain(
+        build_polish_prompt(
+            story_id,
+            chapter,
+            story_language(story_yaml),
+            heading,
+            scene_contract,
+            first_draft,
+        ),
+        polish_chain,
+        config,
+        options,
+    )
+    if not polish_result.get("ok"):
+        attempts = polish_result.get("attempts", [])
+        raise RuntimeError(f"prose polish failed for all configured models: {attempts}")
+    draft_text = normalize_generated_draft(str(polish_result.get("text", "")), heading)
     run_id = str(uuid4())
-    contract_path = story_path / "runs" / f"chapter_{chapter:03d}" / run_id / "scene_contract.json"
-    assert_story_write_allowed(contract_path, story_path)
-    safe_write_file(contract_path, json.dumps(scene_contract, ensure_ascii=False, indent=2) + "\n", story_path)
+    run_path = story_path / "runs" / f"chapter_{chapter:03d}" / run_id
+    contract_path = run_path / "scene_contract.json"
+    skeleton_path = run_path / "scene_skeleton.json"
+    first_draft_path = run_path / "first_draft.md"
+    for artifact_path, content in (
+        (contract_path, json.dumps(scene_contract, ensure_ascii=False, indent=2) + "\n"),
+        (skeleton_path, json.dumps(scene_skeleton, ensure_ascii=False, indent=2) + "\n"),
+        (first_draft_path, first_draft + "\n"),
+    ):
+        assert_story_write_allowed(artifact_path, story_path)
+        safe_write_file(artifact_path, content, story_path)
     output_path = story_path / "drafts" / f"chapter_{chapter:03d}.md"
     assert_story_write_allowed(output_path, story_path)
     saved_path = safe_write_file(output_path, draft_text + "\n", story_path)
@@ -256,20 +429,29 @@ def generate_draft(
         chapter,
         "generation",
         {
-            "model_profile": result.get("model_profile"),
-            "attempts": [*planning_result.get("attempts", []), *result.get("attempts", [])],
+            "model_profile": polish_result.get("model_profile"),
+            "attempts": [
+                *planning_result.get("attempts", []),
+                *skeleton_result.get("attempts", []),
+                *result.get("attempts", []),
+                *polish_result.get("attempts", []),
+            ],
         },
         config,
         {
             "draft": str(saved_path.relative_to(story_path)),
+            "first_draft": str(first_draft_path.relative_to(story_path)),
             "scene_contract": str(contract_path.relative_to(story_path)),
+            "scene_skeleton": str(skeleton_path.relative_to(story_path)),
             "write_pack": str(write_pack_path.relative_to(story_path)),
         },
         {
             "run_id": run_id,
             "stages": [
                 {"name": "scene_planning", "model_profile": planning_result.get("model_profile")},
+                {"name": "scene_skeleton", "model_profile": skeleton_result.get("model_profile")},
                 {"name": "chapter_generation", "model_profile": result.get("model_profile")},
+                {"name": "prose_polish", "model_profile": polish_result.get("model_profile")},
             ],
         },
     )
