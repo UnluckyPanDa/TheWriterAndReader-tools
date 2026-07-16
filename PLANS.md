@@ -2,7 +2,10 @@
 
 ## Current Migration Stage
 
-The repository split is structural-first. Runtime tools should be implemented after the tools repo, workspace repo, templates, skills, and validation checks are stable.
+The reusable runtime toolchain is implemented. Writing quality architecture,
+review gating, workspace scaffolding, model routing, and publish-pack behavior
+have executable tests. See `docs/writing-tools-roadmap.md` for the writing
+quality requirement map.
 
 ## Runtime Implementation Order
 
@@ -15,6 +18,9 @@ The repository split is structural-first. Runtime tools should be implemented af
 7. Review runner and review gate.
 8. Story wizard commands.
 9. Publish tools.
+
+All nine runtime layers have implementations. Future changes should preserve
+their current public commands and fail-closed boundaries.
 
 ## Design Constraints
 

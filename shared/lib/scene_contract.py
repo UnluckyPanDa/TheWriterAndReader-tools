@@ -62,6 +62,7 @@ def parse_scene_contract(text: str, story_id: str, chapter: int) -> dict[str, An
         "pressure",
         "opposition",
         "required_change",
+        "new_information",
         "physical_setting",
         "ending_turn",
     )

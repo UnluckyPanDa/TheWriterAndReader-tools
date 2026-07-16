@@ -39,6 +39,20 @@ Load the narrowest set of files that can answer the current task:
 - For wizard and canon work, load the relevant template, target config, current
   canon, and state files before writing.
 
+Writing packs use three context layers:
+
+1. Mandatory compact context: active chapter direction, viewpoint and
+   relationship state, relevant canon constraints, reveal restrictions,
+   previous ending, and output contract.
+2. Conditional context: objects, locations, secondary characters, series state,
+   and older summaries referenced by the active chapter.
+3. Retrieval context: distant history and inactive material retained in source
+   files until a chapter direction makes it relevant.
+
+Canon-facing pack sections must use bounded fact records. Do not add unrelated
+material merely because the selected model has unused context capacity. Record
+approximate context use by pack category in generation provenance.
+
 ## Freshness Rule
 
 Generated packs are summaries, not authority. If a pack conflicts with

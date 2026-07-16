@@ -6,7 +6,17 @@ from pathlib import Path
 from shared.lib.safe_write import assert_inside_root
 
 
-STORY_WRITE_DIRS = {"drafts", "chapters", "context", "reviews", "runs", "snapshots", "state"}
+STORY_WRITE_DIRS = {
+    "drafts",
+    "chapters",
+    "summaries",
+    "handover",
+    "context",
+    "reviews",
+    "runs",
+    "snapshots",
+    "state",
+}
 
 
 def assert_story_write_allowed(path: str | Path, story_path: str | Path) -> None:

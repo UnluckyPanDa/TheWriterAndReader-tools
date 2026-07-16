@@ -13,6 +13,8 @@ Check the draft against the assigned review focus and current story state.
 - whether choices follow from knowledge, pressure, and personality
 - whether emotion is expressed through behavior, dialogue, or a credible inner response
 - whether relationships change through an observable action or consequence
+- whether the same event would be perceived and decided differently by another viewpoint character
+- whether viewpoint differences appear through attention, interpretation, stress behavior, vocabulary, and choice
 Flag passive exposition that replaces a character decision.
 ## Output
 Use the standard review report template.

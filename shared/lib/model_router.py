@@ -161,13 +161,17 @@ def _mock_response(prompt: str) -> str:
             + story_id
             + '","chapter":'
             + str(chapter)
-            + ',"scenes":[{"scene_id":"scene-1","viewpoint_character":"protagonist",'
+            + ',"chapter_progression":{"plot":"The task changes the practical situation.",'
+            '"character":"The protagonist makes a binding choice.",'
+            '"mystery":"The outcome creates a larger unanswered question."},'
+            '"scenes":[{"scene_id":"scene-1","viewpoint_character":"protagonist",'
             '"starting_state":"The immediate problem is unresolved.",'
             '"immediate_goal":"Resolve the chapter task.",'
             '"pressure":"Delay will increase the cost.",'
             '"opposition":"The situation resists an easy solution.",'
             '"change_axes":["commitment"],'
             '"required_change":"The protagonist makes a binding choice.",'
+            '"new_information":"The choice carries an immediate cost.",'
             '"physical_setting":"The active chapter location.",'
             '"active_characters":["protagonist"],'
             '"required_beats":["The protagonist acts under pressure."],'

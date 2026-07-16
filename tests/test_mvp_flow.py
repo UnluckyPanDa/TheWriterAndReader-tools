@@ -42,6 +42,7 @@ class MvpFlowTests(unittest.TestCase):
 
             self.assertTrue(workspace_yaml.exists())
             self.assertTrue((story_path / "canon" / "canon.md").exists())
+            self.assertTrue((story_path / "writer" / "viewpoint_profiles.yaml").exists())
             self.assertTrue((series_path / "context" / "series_pack.md").exists())
 
             story_yaml = (story_path / "story.yaml").read_text(encoding="utf-8")

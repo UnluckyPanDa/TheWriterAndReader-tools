@@ -1,29 +1,44 @@
 # Writer Profile
 
 ## Voice
-- Describe the intended narrative voice.
-- Keep this story-neutral until a real workspace fills it in.
+- Viewpoint: third_person_close
+- Distance: close_but_not_stream_of_consciousness
+- Tense: past
+- Vocabulary range:
 
 ## Style Rules
 - Preferred sentence rhythm:
 - Dialogue style:
-- Point of view:
-- Tense:
+- Dialogue density:
+- Metaphor frequency:
+- Genre expectations:
 
 ## Emotional Expression
 - Primary methods: action, silence, object interaction, dialogue subtext
 - Direct emotion labels:
 
 ## Description
-- Sensory detail level:
+- Meaningful sensory details per scene:
 - Decorative description level:
 - Technical detail rule:
+
+## Rhythm
+- Default sentence shape:
+- Tension rhythm:
+- Reflection rhythm:
 
 ## Viewpoint Perception
 - Notices first:
 - Common blind spots:
+- Social interpretation pattern:
+- Physical habits:
 - Stress behavior:
 - Decision pattern:
 
 ## Avoid
-- List patterns the writer should not use.
+- Repeated rhetorical questions
+- Repeated descriptions of silence
+- Explaining subtext after dialogue
+- Canon or planning phrasing in narration
+- Generic emotional shorthand
+- Add story-specific prohibited habits here.

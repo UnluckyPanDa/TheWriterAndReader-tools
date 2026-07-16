@@ -40,6 +40,8 @@ paths:
   publish: publish/
 writer:
   profile: writer/writer.md
+writing_diagnostics:
+  source_similarity_exemptions: []
 reviewers:
   config: reviewers/reviewer_config.yaml
   series_reviewers: reviewers/series/

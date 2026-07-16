@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -204,7 +205,10 @@ def _correctness_status(review_rows: list[dict[str, Any]]) -> tuple[str, list[st
     return "pass", []
 
 
-def _novelness_status(review_rows: list[dict[str, Any]]) -> tuple[str, list[str]]:
+def _novelness_status(
+    review_rows: list[dict[str, Any]],
+    diagnostics: dict[str, Any] | None = None,
+) -> tuple[str, list[str]]:
     rows, missing = _required_rows(review_rows, REQUIRED_NOVELNESS)
     if missing:
         return "incomplete", missing
@@ -217,6 +221,11 @@ def _novelness_status(review_rows: list[dict[str, Any]]) -> tuple[str, list[str]
         return "scene_rewrite", []
     if scopes or any(row["decision"] == "revision_recommended" or row["counts"]["major"] for row in rows):
         return "targeted_revision", []
+    metrics = (diagnostics or {}).get("metrics", {})
+    if isinstance(metrics, dict) and int(metrics.get("exact_source_phrase_count", 0) or 0) > 0:
+        return "targeted_revision", []
+    if isinstance(metrics, dict) and int(metrics.get("semantic_repetition_count", 0) or 0) > 0:
+        return "targeted_revision", []
     return "accept", []
 
 
@@ -226,6 +235,7 @@ def _write_novelness_gate(
     status: str,
     missing: list[str],
     review_rows: list[dict[str, Any]],
+    diagnostics: dict[str, Any] | None = None,
 ) -> Path:
     sources = [
         f"standard.{row['reviewer_id']}"
@@ -238,6 +248,9 @@ status: {status}
 required_reviewers: {', '.join(sorted(REQUIRED_NOVELNESS))}
 source_reports: {', '.join(sources) or 'none'}
 missing_reviewers: {', '.join(missing) or 'none'}
+diagnostics: context/chapter_{chapter:03d}_writing_diagnostics.json
+exact_source_phrase_count: {(diagnostics or {}).get('metrics', {}).get('exact_source_phrase_count', 0)}
+semantic_repetition_count: {(diagnostics or {}).get('metrics', {}).get('semantic_repetition_count', 0)}
 
 ## Decision
 
@@ -248,6 +261,94 @@ missing_reviewers: {', '.join(missing) or 'none'}
     return safe_write_file(path, content, story_path)
 
 
+def run_novelness_gate(workspace_path: str | Path, story_id: str, chapter: int) -> Path:
+    """Rebuild the Novelness Gate from current reports and diagnostics."""
+    story_path = resolve_story_path(workspace_path, story_id)
+    review_root = story_path / "reviews" / "chapter" / f"{chapter:03d}"
+    rows: list[dict[str, Any]] = []
+    for reviewer_id in sorted(REQUIRED_NOVELNESS):
+        path = review_root / f"standard.{reviewer_id}.md"
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        errors = validate_review_report(text, reviewer_id)
+        if errors:
+            continue
+        decision, counts = report_decision(text, True)
+        rows.append(
+            {
+                "label": f"standard.{reviewer_id}",
+                "layer": "standard",
+                "reviewer_id": reviewer_id,
+                "can_block": True,
+                "decision": decision,
+                "counts": counts,
+                "rewrite_scope": report_rewrite_scope(text),
+                "summary": "Current evidence-bearing report.",
+            }
+        )
+    diagnostics_path = story_path / "context" / f"chapter_{chapter:03d}_writing_diagnostics.json"
+    diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8")) if diagnostics_path.exists() else {}
+    status, missing = _novelness_status(rows, diagnostics)
+    return _write_novelness_gate(story_path, chapter, status, missing, rows, diagnostics)
+
+
+def rebuild_review_gate(workspace_path: str | Path, story_id: str, chapter: int) -> dict[str, Path]:
+    """Rebuild combined and quality gates from current valid reviewer reports."""
+    story_path = resolve_story_path(workspace_path, story_id)
+    reviewer_config = _load_yaml_file(story_path / "reviewers" / "reviewer_config.yaml")
+    reports: list[Path] = []
+    rows: list[dict[str, Any]] = []
+    for layer, key in (
+        ("standard", "standard_reviewers"),
+        ("series", "series_reviewers"),
+        ("special", "special_reviewers"),
+    ):
+        for reviewer_id, settings in _enabled_reviewers(reviewer_config, key):
+            path = _report_path(story_path, chapter, layer, reviewer_id)
+            if not path.exists():
+                continue
+            text = path.read_text(encoding="utf-8")
+            if validate_review_report(text, reviewer_id):
+                continue
+            can_block = bool(settings.get("can_block_gate", True))
+            decision, counts = report_decision(text, can_block)
+            summary = re.sub(r"\s+", " ", text.split("## Evidence", 1)[0].split("## Summary", 1)[-1]).strip()[:120]
+            reports.append(path)
+            rows.append(
+                {
+                    "label": f"{layer}.{reviewer_id}",
+                    "layer": layer,
+                    "reviewer_id": reviewer_id,
+                    "can_block": can_block,
+                    "decision": decision,
+                    "counts": counts,
+                    "rewrite_scope": report_rewrite_scope(text),
+                    "summary": summary or "No summary provided.",
+                }
+            )
+    if not reports:
+        raise RuntimeError("no valid current reviewer reports found")
+    combined_path = _combine_reviews(story_path, chapter, reports)
+    diagnostics_path = story_path / "context" / f"chapter_{chapter:03d}_writing_diagnostics.json"
+    diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8")) if diagnostics_path.exists() else {}
+    gate_path, task_path, novelness_path = _write_gate(
+        story_path,
+        chapter,
+        str(uuid4()),
+        _draft_hash(story_path, chapter),
+        rows,
+        combined_path,
+        diagnostics,
+    )
+    return {
+        "combined_review": combined_path,
+        "review_gate": gate_path,
+        "novelness_gate": novelness_path,
+        "review_task_summary": task_path,
+    }
+
+
 def _write_gate(
     story_path: Path,
     chapter: int,
@@ -255,9 +356,10 @@ def _write_gate(
     draft_sha256: str,
     review_rows: list[dict[str, Any]],
     combined_path: Path,
+    diagnostics: dict[str, Any] | None = None,
 ) -> tuple[Path, Path, Path]:
     correctness, missing_correctness = _correctness_status(review_rows)
-    novelness, missing_novelness = _novelness_status(review_rows)
+    novelness, missing_novelness = _novelness_status(review_rows, diagnostics)
     base_status = _combined_gate_status([str(row["decision"]) for row in review_rows])
     if correctness != "pass" or novelness in {"incomplete", "chapter_rewrite"}:
         status = "blocked"
@@ -338,7 +440,14 @@ missing_novelness_reviewers: {', '.join(missing_novelness) or 'none'}
     task_path = story_path / "reviews" / "chapter" / f"{chapter:03d}" / "review_task_summary.md"
     assert_story_write_allowed(task_path, story_path)
     safe_write_file(task_path, task_content, story_path)
-    novelness_path = _write_novelness_gate(story_path, chapter, novelness, missing_novelness, review_rows)
+    novelness_path = _write_novelness_gate(
+        story_path,
+        chapter,
+        novelness,
+        missing_novelness,
+        review_rows,
+        diagnostics,
+    )
     return gate_path, task_path, novelness_path
 
 
@@ -404,6 +513,12 @@ def run_review(
             attempts.extend(result.get("attempts", []))
 
         combined_path = _combine_reviews(story_path, chapter, reports)
+        diagnostics_path = story_path / "context" / f"chapter_{chapter:03d}_writing_diagnostics.json"
+        diagnostics = (
+            json.loads(diagnostics_path.read_text(encoding="utf-8"))
+            if diagnostics_path.exists()
+            else {}
+        )
         gate_path, task_path, novelness_path = _write_gate(
             story_path,
             chapter,
@@ -411,6 +526,7 @@ def run_review(
             draft_sha256,
             rows,
             combined_path,
+            diagnostics,
         )
         write_run_provenance(
             story_path,

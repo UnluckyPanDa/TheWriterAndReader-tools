@@ -1,0 +1,287 @@
+"""Apply a targeted revision mode to an existing chapter draft."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+from shared.lib.config_loader import load_config
+from shared.lib.model_router import attempt_model_chain, select_model_for_stage
+from shared.lib.path_rules import assert_story_write_allowed
+from shared.lib.run_provenance import require_explicit_runtime_config, write_run_provenance
+from shared.lib.safe_write import safe_write_file
+from shared.lib.story_loader import load_markdown_file, load_story_yaml
+from shared.lib.workspace_loader import resolve_story_path
+from tools.writing.build_write_pack import build_write_pack
+from tools.writing.diagnose import analyze_draft
+from tools.writing.generate_draft import chapter_heading, normalize_generated_draft, story_language
+from tools.writing.scene_workflow import load_scene_plan
+
+
+REVISION_MODES = (
+    "compress",
+    "deepen",
+    "de-duplicate",
+    "improve-dialogue",
+    "strengthen-viewpoint",
+    "rebalance-exposition",
+    "improve-transition",
+    "strengthen-hook",
+    "prose-polish",
+)
+
+MODE_RULES = {
+    "compress": "Remove repetition and explanation without adding events or changing scene outcomes.",
+    "deepen": "Replace summary with action, interaction, physical context, and consequence while preserving events.",
+    "de-duplicate": "Remove repeated meanings, phrases, gestures, images, and emotional explanations.",
+    "improve-dialogue": "Strengthen intention, resistance, interruption, evasion, and subtext without adding exposition.",
+    "strengthen-viewpoint": "Filter observations through the active viewpoint character's priorities and knowledge.",
+    "rebalance-exposition": "Retain only information needed for immediate understanding, conflict, risk, or choice.",
+    "improve-transition": "Clarify causal, spatial, and temporal movement between existing beats and scenes.",
+    "strengthen-hook": "Strengthen opening pressure and the existing ending turn without inventing a new event.",
+    "prose-polish": "Improve rhythm, wording, paragraph shape, and transitions without changing story content.",
+}
+
+
+def build_revision_prompt(
+    story_id: str,
+    chapter: int,
+    language: str,
+    heading: str,
+    mode: str,
+    draft: str,
+    write_pack: str,
+    diagnostics: dict[str, Any],
+    review_feedback: str,
+) -> str:
+    """Build a mode-specific revision prompt with strict story boundaries."""
+    if mode not in REVISION_MODES:
+        raise ValueError(f"unknown revision mode: {mode}")
+    return f"""Revise chapter {chapter} of story `{story_id}` in {language}.
+
+revision_mode: {mode}
+primary_rule: {MODE_RULES[mode]}
+
+## Active Write Pack
+{write_pack}
+
+## Current Draft
+{draft}
+
+## Deterministic Diagnostics
+{json.dumps(diagnostics, ensure_ascii=False, indent=2)}
+
+## Review Feedback
+{review_feedback.strip() or "No review feedback is available."}
+
+## Revision Contract
+- Apply only the requested revision mode and directly relevant review targets.
+- Preserve canon, reveal timing, events, scene order, character decisions, viewpoint assignments, and ending outcome.
+- Do not add characters, locations, objects, plot events, lore, or background facts.
+- Do not copy wording from canon, plans, summaries, diagnostics, or reviewer reports.
+- Keep concrete action, causal pressure, selective sensory detail, and meaningful dialogue.
+- Return only the revised chapter, starting with this exact heading:
+
+{heading}
+"""
+
+
+def build_scene_revision_prompt(
+    story_id: str,
+    chapter: int,
+    scene_id: str,
+    language: str,
+    mode: str,
+    scene_contract: dict[str, Any],
+    scene_draft: str,
+    diagnostics: dict[str, Any],
+) -> str:
+    """Build a targeted prompt that cannot rewrite neighboring scenes."""
+    if mode not in REVISION_MODES:
+        raise ValueError(f"unknown revision mode: {mode}")
+    return f"""Revise only scene `{scene_id}` from story `{story_id}`, chapter {chapter}, in {language}.
+
+revision_mode: {mode}
+primary_rule: {MODE_RULES[mode]}
+
+## Scene Contract
+{json.dumps(scene_contract, ensure_ascii=False, indent=2)}
+
+## Current Scene Draft
+{scene_draft}
+
+## Scene Diagnostics
+{json.dumps(diagnostics, ensure_ascii=False, indent=2)}
+
+## Scene Revision Contract
+- Apply only the requested mode inside this scene.
+- Preserve the entry condition, events, required beats, decision, state change, reveal boundaries, exit condition, and ending turn.
+- Do not add facts, characters, locations, objects, or events.
+- Do not write a chapter heading, scene label, commentary, or revision notes.
+- Return only revised scene prose.
+"""
+
+
+def revise_draft(
+    workspace_path: str | Path,
+    story_id: str,
+    chapter: int,
+    mode: str,
+    config_path: str | None = None,
+    options: dict[str, Any] | None = None,
+) -> Path:
+    """Run one targeted revision and replace the active draft."""
+    if mode not in REVISION_MODES:
+        raise ValueError(f"unknown revision mode: {mode}")
+    story_path = resolve_story_path(workspace_path, story_id)
+    draft_path = story_path / "drafts" / f"chapter_{chapter:03d}.md"
+    draft = load_markdown_file(draft_path)
+    if not draft.strip():
+        raise FileNotFoundError(f"draft is missing or empty: {draft_path}")
+
+    config = load_config(config_path)
+    require_explicit_runtime_config(config, "chapter revision")
+    story_yaml = load_story_yaml(story_path)
+    language = story_language(story_yaml)
+    heading = chapter_heading(chapter, language)
+    write_pack_path = build_write_pack(str(workspace_path), story_id, chapter)
+    write_pack = write_pack_path.read_text(encoding="utf-8")
+    diagnostics = analyze_draft(story_path, chapter, draft)
+    review_feedback = load_markdown_file(
+        story_path / "reviews" / "chapter" / f"{chapter:03d}" / "combined_review.md"
+    )
+    prompt = build_revision_prompt(
+        story_id,
+        chapter,
+        language,
+        heading,
+        mode,
+        draft,
+        write_pack,
+        diagnostics,
+        review_feedback,
+    )
+    chain = select_model_for_stage(config, "chapter_revision", fallback_stage="chapter_generation")
+    result = attempt_model_chain(prompt, chain, config, options)
+    if not result.get("ok"):
+        raise RuntimeError(f"chapter revision failed for all configured models: {result.get('attempts', [])}")
+
+    revised = normalize_generated_draft(str(result.get("text", "")), heading)
+    run_id = str(uuid4())
+    run_path = story_path / "runs" / f"chapter_{chapter:03d}" / run_id
+    source_path = run_path / "revision_source.md"
+    before_path = run_path / "diagnostics_before.json"
+    after_path = run_path / "diagnostics_after.json"
+    after = analyze_draft(story_path, chapter, revised)
+    for artifact_path, content in (
+        (source_path, draft.rstrip() + "\n"),
+        (before_path, json.dumps(diagnostics, ensure_ascii=False, indent=2) + "\n"),
+        (after_path, json.dumps(after, ensure_ascii=False, indent=2) + "\n"),
+    ):
+        assert_story_write_allowed(artifact_path, story_path)
+        safe_write_file(artifact_path, content, story_path)
+    assert_story_write_allowed(draft_path, story_path)
+    saved_path = safe_write_file(draft_path, revised.rstrip() + "\n", story_path)
+    write_run_provenance(
+        story_path,
+        chapter,
+        "revision",
+        result,
+        config,
+        {
+            "draft": str(saved_path.relative_to(story_path)),
+            "source_draft": str(source_path.relative_to(story_path)),
+            "diagnostics_before": str(before_path.relative_to(story_path)),
+            "diagnostics_after": str(after_path.relative_to(story_path)),
+            "write_pack": str(write_pack_path.relative_to(story_path)),
+        },
+        {"run_id": run_id, "revision_mode": mode},
+    )
+    return saved_path
+
+
+def revise_scene(
+    workspace_path: str | Path,
+    story_id: str,
+    chapter: int,
+    scene_id: str,
+    mode: str,
+    config_path: str | None = None,
+    options: dict[str, Any] | None = None,
+) -> Path:
+    """Revise one active scene draft without rewriting neighboring scenes."""
+    if mode not in REVISION_MODES:
+        raise ValueError(f"unknown revision mode: {mode}")
+    story_path = resolve_story_path(workspace_path, story_id)
+    contract, _ = load_scene_plan(story_path, story_id, chapter)
+    contract_by_id = {str(scene["scene_id"]): scene for scene in contract["scenes"]}
+    if scene_id not in contract_by_id:
+        raise ValueError(f"unknown scene_id: {scene_id}")
+    scene_path = story_path / "drafts" / f"chapter_{chapter:03d}_scenes" / f"{scene_id}.md"
+    scene_draft = load_markdown_file(scene_path)
+    if not scene_draft.strip():
+        raise FileNotFoundError(f"scene draft is missing or empty: {scene_path}")
+    config = load_config(config_path)
+    require_explicit_runtime_config(config, "scene revision")
+    language = story_language(load_story_yaml(story_path))
+    diagnostics = analyze_draft(story_path, chapter, scene_draft)
+    result = attempt_model_chain(
+        build_scene_revision_prompt(
+            story_id,
+            chapter,
+            scene_id,
+            language,
+            mode,
+            contract_by_id[scene_id],
+            scene_draft,
+            diagnostics,
+        ),
+        select_model_for_stage(config, "chapter_revision", fallback_stage="chapter_generation"),
+        config,
+        options,
+    )
+    if not result.get("ok"):
+        raise RuntimeError(f"scene revision failed for all configured models: {result.get('attempts', [])}")
+    revised = str(result.get("text", "")).strip()
+    lines = revised.splitlines()
+    if lines and (lines[0].startswith("#") or lines[0].lower().startswith("scene ")):
+        revised = "\n".join(lines[1:]).strip()
+    run_id = str(uuid4())
+    run_path = story_path / "runs" / f"chapter_{chapter:03d}" / run_id
+    source_path = run_path / f"{scene_id}.revision_source.md"
+    assert_story_write_allowed(source_path, story_path)
+    safe_write_file(source_path, scene_draft.rstrip() + "\n", story_path)
+    assert_story_write_allowed(scene_path, story_path)
+    saved_path = safe_write_file(scene_path, revised.rstrip() + "\n", story_path)
+    write_run_provenance(
+        story_path,
+        chapter,
+        f"scene_revision_{scene_id}",
+        result,
+        config,
+        {
+            "scene_draft": str(saved_path.relative_to(story_path)),
+            "source_scene": str(source_path.relative_to(story_path)),
+        },
+        {"run_id": run_id, "scene_id": scene_id, "revision_mode": mode},
+    )
+    return saved_path
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Apply a targeted chapter revision.")
+    parser.add_argument("--workspace", required=True)
+    parser.add_argument("--story", required=True)
+    parser.add_argument("--chapter", required=True, type=int)
+    parser.add_argument("--mode", required=True, choices=REVISION_MODES)
+    parser.add_argument("--config")
+    args = parser.parse_args(argv)
+    print(revise_draft(args.workspace, args.story, args.chapter, args.mode, args.config))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

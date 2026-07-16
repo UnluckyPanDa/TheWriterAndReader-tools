@@ -59,9 +59,25 @@ writing_stages:
     intelligence: high
     creativity: high
     provider_group: local_first_with_online_fallback
+  narrative_deepening:
+    intelligence: high
+    creativity: high
+    provider_group: local_first_with_online_fallback
+  de_duplication:
+    intelligence: medium
+    creativity: low
+    provider_group: local_first_with_online_fallback
   prose_polish:
     intelligence: medium
     creativity: medium
+    provider_group: local_first_with_online_fallback
+  chapter_revision:
+    intelligence: high
+    creativity: medium
+    provider_group: local_first_with_online_fallback
+  handover_update:
+    intelligence: medium
+    creativity: low
     provider_group: local_first_with_online_fallback
   issue_explanation:
     intelligence: high

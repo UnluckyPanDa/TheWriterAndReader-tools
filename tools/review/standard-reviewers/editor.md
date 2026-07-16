@@ -15,6 +15,9 @@ Check the draft against the assigned review focus and current story state.
 - opening pull, paragraph movement, and ending impact
 - whether canon, character, or planning language is being paraphrased as narration instead of dramatized through events
 - whether each paragraph advances action, perception, choice, consequence, or pressure
+- semantic repetition and source-wording reuse identified by deterministic diagnostics
+- dialogue intention, resistance, interruption, misunderstanding, and subtext
+- transition quality, image freshness, and whether the final turn creates concrete forward pull
 A chapter cannot pass this review if its key development is only summarized.
 A chapter cannot pass if repeated abstract explanations or canon paraphrases substitute for scene movement.
 ## Output

@@ -68,6 +68,14 @@ Each proposed canon update must include:
 - Keep first-draft generation separate from compression and voice polish.
   Polishing must preserve events, decisions, reveals, scene order, and ending
   turns.
+- Draft planned scenes individually, assemble them in contract order, deepen
+  only missing embodiment, compress repeated meaning, and polish voice as
+  separate model stages.
+- Run deterministic repetition, paragraph-function, exposition, and
+  source-wording diagnostics before review. Diagnostics identify revision
+  targets and do not rewrite prose automatically.
+- Store intermediate drafts, diagnostics, model attempts, routing stages,
+  context counts, and output paths in immutable run provenance.
 - Do not reveal hidden truths before the reveal lock allows them.
 - Use the point of view, names, titles, and forms of address that are valid for
   the current chapter.

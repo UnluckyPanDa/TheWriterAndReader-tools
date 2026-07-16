@@ -89,9 +89,32 @@ Normal chapter flow:
 ```text
 twr write pack --workspace /path/to/workspace --story story-1 --chapter 1
 twr write draft --workspace /path/to/workspace --story story-1 --chapter 1
+twr write diagnose --workspace /path/to/workspace --story story-1 --chapter 1
 twr review pack --workspace /path/to/workspace --story story-1 --chapter 1
 twr review run --workspace /path/to/workspace --story story-1 --chapter 1
+twr write revise --workspace /path/to/workspace --story story-1 --chapter 1 --mode strengthen-viewpoint
+twr review run --workspace /path/to/workspace --story story-1 --chapter 1
+twr write accept --workspace /path/to/workspace --story story-1 --chapter 1
 ```
+
+For explicit scene control, use:
+
+```text
+twr write plan-scene --workspace /path/to/workspace --story story-1 --chapter 1
+twr write draft-scene --workspace /path/to/workspace --story story-1 --chapter 1 --scene scene-1
+twr write assemble-chapter --workspace /path/to/workspace --story story-1 --chapter 1
+```
+
+Targeted revision modes are `compress`, `deepen`, `de-duplicate`,
+`improve-dialogue`, `strengthen-viewpoint`, `rebalance-exposition`,
+`improve-transition`, `strengthen-hook`, and `prose-polish`. Rebuild only the
+Novelness Gate from current evidence with `twr review novelness`.
+Use `twr write revise-scene --scene <id> --mode <mode>` for a local issue in an
+active scene draft; neighboring scenes and the assembled chapter are untouched.
+When a writer disputes one cited issue, save one explanation and run the
+higher-intelligence check with `twr review rereview --reviewer <id>
+--explanation-file <path>`. A rejected explanation requires prose revision; the
+same reviewer cannot receive a second explanation for that chapter.
 
 Writing reads the selected story config, writer profile, canon, storyline, prior
 context, and `context/write_pack.md`, then writes generated outputs inside the
@@ -100,11 +123,15 @@ standard reviewers, target draft, canon, reveal lock, storyline, and
 `context/review_pack.md`, then writes review outputs inside the selected story
 folder.
 
-`twr write draft` rebuilds the active chapter pack, validates a scene contract,
-and then generates the chapter. `twr review run` records correctness and
-novelness independently; acceptance requires continuity, reveal-lock, editor,
-pacing, tone, and character review results. Generated scene contracts and run
-metadata remain inside the selected story's `runs/` directory.
+`twr write draft` rebuilds a relevance-bounded write pack, validates a scene
+contract and action skeleton, drafts each scene, deepens the assembled prose,
+compresses repeated meaning, polishes voice and rhythm, and records deterministic
+diagnostics. `twr review run` records correctness and novelness independently;
+acceptance requires continuity, reveal-lock, editor, pacing, tone, and character
+review results. Exact source-wording detection independently prevents a generic
+review pass from accepting copied source prose. Intermediate drafts, diagnostics,
+scene contracts, model attempts, context counts, and run metadata remain inside
+the selected story's `runs/` directory.
 
 Neither skill may directly edit story canon, series canon, or another story's
 files. Canon-impacting findings or new facts must be recorded as proposed canon

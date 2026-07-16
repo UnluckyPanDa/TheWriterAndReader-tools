@@ -18,7 +18,8 @@ from shared.lib.scene_skeleton import parse_scene_skeleton
 from shared.lib.safe_write import safe_write_file
 from shared.lib.story_loader import load_markdown_file, load_story_yaml
 from shared.lib.workspace_loader import resolve_story_path
-from tools.writing.build_write_pack import build_write_pack
+from tools.writing.build_write_pack import build_write_pack, write_pack_token_counts
+from tools.writing.diagnose import write_diagnostics
 
 
 def story_language(story_yaml: dict[str, Any]) -> str:
@@ -98,8 +99,9 @@ chapter: {chapter}
 {write_pack}
 
 ## Scene Contract Rules
-- Return only one JSON object with schema_version, story_id, chapter, and scenes.
-- Every scene needs a unique scene_id, viewpoint_character, starting_state, immediate_goal, pressure, opposition, change_axes, required_change, physical_setting, active_characters, required_beats, forbidden_reveals, and ending_turn.
+- Return only one JSON object with schema_version, story_id, chapter, chapter_progression, and scenes.
+- chapter_progression needs concrete plot, character, and mystery movement.
+- Every scene needs a unique scene_id, viewpoint_character, starting_state, immediate_goal, pressure, opposition, change_axes, required_change, new_information, physical_setting, active_characters, required_beats, forbidden_reveals, and ending_turn.
 - change_axes may contain only: knowledge, emotion, relationship, practical_situation, danger, intention, mystery, access, commitment, reader_expectation.
 - Every scene must change at least one axis and end in a materially different state.
 - Preserve canon and reveal timing. Treat supplied wording as reference, not prose to copy.
@@ -255,6 +257,7 @@ def build_polish_prompt(
     heading: str,
     scene_contract: dict[str, Any],
     first_draft: str,
+    writer_voice: str = "",
 ) -> str:
     """Build a constrained compression and voice-polish prompt."""
     return f"""Polish this fiction chapter in {language}.
@@ -265,7 +268,10 @@ chapter: {chapter}
 ## Validated Scene Contract
 {json.dumps(scene_contract, ensure_ascii=False, indent=2)}
 
-## First Prose Draft
+## Writer Voice
+{writer_voice.strip() or "Use the established voice of the supplied draft."}
+
+## Draft To Polish
 {first_draft}
 
 ## Polish Rules
@@ -281,7 +287,111 @@ chapter: {chapter}
 """
 
 
-def _generate_scene_contract(
+def build_scene_generation_prompt(
+    story_id: str,
+    chapter: int,
+    language: str,
+    scene_contract: dict[str, Any],
+    scene_skeleton: dict[str, Any],
+    write_pack: str,
+    continuity_entry: str,
+) -> str:
+    """Build a first-prose prompt for one validated scene."""
+    return f"""Draft one fiction scene for story `{story_id}`, chapter {chapter}, in {language}.
+
+## Active Write Pack
+{write_pack}
+
+## Scene Contract
+{json.dumps(scene_contract, ensure_ascii=False, indent=2)}
+
+## Scene Skeleton
+{json.dumps(scene_skeleton, ensure_ascii=False, indent=2)}
+
+## Continuity Entry
+{continuity_entry}
+
+## First Prose Pass Rules
+- Write only this scene in finished novel prose, without a chapter heading or scene label.
+- Follow the action sequence causally and complete every required beat and state change.
+- Use physical action, character interaction, viewpoint-specific perception, concrete setting, and cause and effect.
+- Keep explanation minimal. Dialogue must pursue an immediate goal and meet resistance.
+- Preserve canon and forbidden reveals. Treat supplied planning wording as facts, not prose to copy.
+- End on the specified exit condition and ending turn.
+- Return only scene prose.
+"""
+
+
+def build_deepening_prompt(
+    story_id: str,
+    chapter: int,
+    language: str,
+    heading: str,
+    scene_contract: dict[str, Any],
+    draft: str,
+) -> str:
+    """Build the narrative-deepening pass prompt."""
+    return f"""Deepen this fiction chapter for story `{story_id}`, chapter {chapter}, in {language}.
+
+## Validated Scene Contract
+{json.dumps(scene_contract, ensure_ascii=False, indent=2)}
+
+## First Prose Draft
+{draft}
+
+## Narrative Deepening Rules
+- Preserve events, scene order, decisions, reveal timing, and ending turns.
+- Add only missing physical behavior, social pressure, selective sensory detail, subtext, interruption, meaningful object interaction, or emotional contradiction.
+- Replace synopsis-like statements with lived action only where the scene contract requires the moment to land.
+- Do not make sentences longer merely to add texture.
+- Do not add facts, characters, objects, locations, backstory, or new dialogue topics.
+- Return only the deepened chapter, starting with this exact heading:
+
+{heading}
+"""
+
+
+def build_compression_prompt(
+    story_id: str,
+    chapter: int,
+    language: str,
+    heading: str,
+    scene_contract: dict[str, Any],
+    draft: str,
+) -> str:
+    """Build the compression and semantic de-duplication pass prompt."""
+    return f"""Compress and de-duplicate this fiction chapter for story `{story_id}`, chapter {chapter}, in {language}.
+
+## Validated Scene Contract
+{json.dumps(scene_contract, ensure_ascii=False, indent=2)}
+
+## Deepened Draft
+{draft}
+
+## Compression Rules
+- Preserve every required beat, event, choice, consequence, reveal boundary, scene order, and ending turn.
+- Remove repeated meanings, repeated emotion labels, duplicate metaphors, canon restatement, summary after dialogue, and explanations already demonstrated through action.
+- Remove padding created by synonyms, repeated internal questions, generic sensory language, and minor movement without consequence.
+- Do not add or replace plot content.
+- Return only the compressed chapter, starting with this exact heading:
+
+{heading}
+"""
+
+
+def _write_pack_section(write_pack: str, heading: str) -> str:
+    match = re.search(rf"^## {re.escape(heading)}[^\n]*\n(.*?)(?=^## |\Z)", write_pack, re.MULTILINE | re.DOTALL)
+    return match.group(1).strip() if match else ""
+
+
+def _normalize_scene_draft(text: str) -> str:
+    lines = text.strip().splitlines()
+    while lines and (looks_like_chapter_heading(lines[0]) or lines[0].strip().lower().startswith("scene ")):
+        lines.pop(0)
+    return "\n".join(lines).strip()
+
+
+def generate_scene_contract(
     config: dict[str, Any],
     story_id: str,
     chapter: int,
@@ -314,7 +424,7 @@ def _generate_scene_contract(
         return contract, repair
 
 
-def _generate_scene_skeleton(
+def generate_scene_skeleton(
     config: dict[str, Any],
     story_id: str,
     chapter: int,
@@ -373,33 +483,83 @@ def generate_draft(
     require_explicit_runtime_config(config, "chapter generation")
     write_pack_path = build_write_pack(str(workspace_path), story_id, chapter)
     write_pack = write_pack_path.read_text(encoding="utf-8")
-    scene_contract, planning_result = _generate_scene_contract(config, story_id, chapter, write_pack, options)
-    scene_skeleton, skeleton_result = _generate_scene_skeleton(config, story_id, chapter, scene_contract, options)
-    prompt = build_generation_prompt(
-        workspace_path,
-        story_id,
-        chapter,
-        scene_contract,
-        scene_skeleton,
-        write_pack,
-    )
-    chain = select_model_for_stage(config, "chapter_generation")
-    result = attempt_model_chain(prompt, chain, config, options)
-    if not result.get("ok"):
-        attempts = result.get("attempts", [])
-        raise RuntimeError(f"draft generation failed for all configured models: {attempts}")
+    scene_contract, planning_result = generate_scene_contract(config, story_id, chapter, write_pack, options)
+    scene_skeleton, skeleton_result = generate_scene_skeleton(config, story_id, chapter, scene_contract, options)
+    language = story_language(story_yaml)
+    heading = chapter_heading(chapter, language)
+    accepted_entry = "No previous accepted chapter is available."
+    if chapter > 1:
+        accepted = load_markdown_file(story_path / "chapters" / f"chapter_{chapter - 1:03d}.md")
+        if accepted.strip():
+            accepted_entry = "\n".join(accepted.strip().splitlines()[-40:])
 
-    heading = chapter_heading(chapter, story_language(story_yaml))
-    first_draft = normalize_generated_draft(str(result.get("text", "")), heading)
+    chain = select_model_for_stage(config, "chapter_generation")
+    skeleton_by_id = {scene["scene_id"]: scene for scene in scene_skeleton["scenes"]}
+    scene_results: list[dict[str, Any]] = []
+    scene_drafts: list[tuple[str, str]] = []
+    continuity_entry = accepted_entry
+    for scene in scene_contract["scenes"]:
+        scene_id = str(scene["scene_id"])
+        result = attempt_model_chain(
+            build_scene_generation_prompt(
+                story_id,
+                chapter,
+                language,
+                scene,
+                skeleton_by_id[scene_id],
+                write_pack,
+                continuity_entry,
+            ),
+            chain,
+            config,
+            options,
+        )
+        if not result.get("ok"):
+            raise RuntimeError(
+                f"scene draft {scene_id} failed for all configured models: {result.get('attempts', [])}"
+            )
+        scene_text = _normalize_scene_draft(str(result.get("text", "")))
+        scene_results.append(result)
+        scene_drafts.append((scene_id, scene_text))
+        continuity_entry = f"Previous scene ending turn: {scene['ending_turn']}\nPrevious scene final prose:\n" + "\n".join(
+            scene_text.splitlines()[-12:]
+        )
+
+    first_draft = heading + "\n\n" + "\n\n".join(text for _, text in scene_drafts)
+    deepening_chain = select_model_for_stage(config, "narrative_deepening", fallback_stage="chapter_generation")
+    deepening_result = attempt_model_chain(
+        build_deepening_prompt(story_id, chapter, language, heading, scene_contract, first_draft),
+        deepening_chain,
+        config,
+        options,
+    )
+    if not deepening_result.get("ok"):
+        raise RuntimeError(
+            f"narrative deepening failed for all configured models: {deepening_result.get('attempts', [])}"
+        )
+    deepened_draft = normalize_generated_draft(str(deepening_result.get("text", "")), heading)
+    compression_chain = select_model_for_stage(config, "de_duplication", fallback_stage="chapter_generation")
+    compression_result = attempt_model_chain(
+        build_compression_prompt(story_id, chapter, language, heading, scene_contract, deepened_draft),
+        compression_chain,
+        config,
+        options,
+    )
+    if not compression_result.get("ok"):
+        raise RuntimeError(
+            f"compression and de-duplication failed for all configured models: {compression_result.get('attempts', [])}"
+        )
+    compressed_draft = normalize_generated_draft(str(compression_result.get("text", "")), heading)
     polish_chain = select_model_for_stage(config, "prose_polish", fallback_stage="chapter_generation")
     polish_result = attempt_model_chain(
         build_polish_prompt(
             story_id,
             chapter,
-            story_language(story_yaml),
+            language,
             heading,
             scene_contract,
-            first_draft,
+            compressed_draft,
+            _write_pack_section(write_pack, "Writer Voice"),
         ),
         polish_chain,
         config,
@@ -414,16 +574,33 @@ def generate_draft(
     contract_path = run_path / "scene_contract.json"
     skeleton_path = run_path / "scene_skeleton.json"
     first_draft_path = run_path / "first_draft.md"
+    deepened_draft_path = run_path / "deepened_draft.md"
+    compressed_draft_path = run_path / "compressed_draft.md"
     for artifact_path, content in (
         (contract_path, json.dumps(scene_contract, ensure_ascii=False, indent=2) + "\n"),
         (skeleton_path, json.dumps(scene_skeleton, ensure_ascii=False, indent=2) + "\n"),
         (first_draft_path, first_draft + "\n"),
+        (deepened_draft_path, deepened_draft + "\n"),
+        (compressed_draft_path, compressed_draft + "\n"),
     ):
         assert_story_write_allowed(artifact_path, story_path)
         safe_write_file(artifact_path, content, story_path)
+    scene_paths: dict[str, str] = {}
+    for scene_id, scene_text in scene_drafts:
+        scene_path = run_path / "scenes" / f"{scene_id}.md"
+        assert_story_write_allowed(scene_path, story_path)
+        safe_write_file(scene_path, scene_text.rstrip() + "\n", story_path)
+        scene_paths[scene_id] = str(scene_path.relative_to(story_path))
     output_path = story_path / "drafts" / f"chapter_{chapter:03d}.md"
     assert_story_write_allowed(output_path, story_path)
     saved_path = safe_write_file(output_path, draft_text + "\n", story_path)
+    diagnostics_path = write_diagnostics(
+        workspace_path,
+        story_id,
+        chapter,
+        run_path / "writing_diagnostics.json",
+    )
+    diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
     write_run_provenance(
         story_path,
         chapter,
@@ -433,24 +610,39 @@ def generate_draft(
             "attempts": [
                 *planning_result.get("attempts", []),
                 *skeleton_result.get("attempts", []),
-                *result.get("attempts", []),
+                *(attempt for result in scene_results for attempt in result.get("attempts", [])),
+                *deepening_result.get("attempts", []),
+                *compression_result.get("attempts", []),
                 *polish_result.get("attempts", []),
             ],
         },
         config,
         {
             "draft": str(saved_path.relative_to(story_path)),
+            "diagnostics": str(diagnostics_path.relative_to(story_path)),
             "first_draft": str(first_draft_path.relative_to(story_path)),
+            "deepened_draft": str(deepened_draft_path.relative_to(story_path)),
+            "compressed_draft": str(compressed_draft_path.relative_to(story_path)),
+            "scene_drafts": scene_paths,
             "scene_contract": str(contract_path.relative_to(story_path)),
             "scene_skeleton": str(skeleton_path.relative_to(story_path)),
             "write_pack": str(write_pack_path.relative_to(story_path)),
         },
         {
             "run_id": run_id,
+            "context_tokens_by_category": write_pack_token_counts(write_pack),
+            "context_files_loaded": diagnostics.get("source_files_checked", []),
+            "writing_metrics": diagnostics.get("metrics", {}),
+            "generation_pass": "voice_polish_complete",
             "stages": [
                 {"name": "scene_planning", "model_profile": planning_result.get("model_profile")},
                 {"name": "scene_skeleton", "model_profile": skeleton_result.get("model_profile")},
-                {"name": "chapter_generation", "model_profile": result.get("model_profile")},
+                {
+                    "name": "scene_first_drafts",
+                    "model_profiles": [result.get("model_profile") for result in scene_results],
+                },
+                {"name": "narrative_deepening", "model_profile": deepening_result.get("model_profile")},
+                {"name": "de_duplication", "model_profile": compression_result.get("model_profile")},
                 {"name": "prose_polish", "model_profile": polish_result.get("model_profile")},
             ],
         },

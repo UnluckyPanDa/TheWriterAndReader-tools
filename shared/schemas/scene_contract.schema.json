@@ -4,7 +4,7 @@
   "title": "TWR Chapter Scene Contract",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "story_id", "chapter", "scenes"],
+  "required": ["schema_version", "story_id", "chapter", "chapter_progression", "scenes"],
   "properties": {
     "schema_version": {
       "const": 1
@@ -16,6 +16,16 @@
     "chapter": {
       "type": "integer",
       "minimum": 1
+    },
+    "chapter_progression": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plot", "character", "mystery"],
+      "properties": {
+        "plot": { "$ref": "#/$defs/nonEmptyString" },
+        "character": { "$ref": "#/$defs/nonEmptyString" },
+        "mystery": { "$ref": "#/$defs/nonEmptyString" }
+      }
     },
     "scenes": {
       "type": "array",
@@ -42,6 +52,7 @@
         "opposition",
         "change_axes",
         "required_change",
+        "new_information",
         "physical_setting",
         "active_characters",
         "required_beats",
@@ -50,7 +61,9 @@
       ],
       "properties": {
         "scene_id": {
-          "$ref": "#/$defs/nonEmptyString"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+$"
         },
         "viewpoint_character": {
           "$ref": "#/$defs/nonEmptyString"
@@ -87,6 +100,9 @@
           }
         },
         "required_change": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "new_information": {
           "$ref": "#/$defs/nonEmptyString"
         },
         "physical_setting": {

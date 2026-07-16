@@ -11,7 +11,7 @@ from shared.lib.review_parser import recommended_gate_status, validate_review_re
 from shared.lib.scene_contract import parse_scene_contract
 from shared.lib.scene_skeleton import parse_scene_skeleton
 from tools.review.build_review_pack import build_review_pack
-from tools.review.run_review import _novelness_status, run_review
+from tools.review.run_review import _novelness_status, run_novelness_gate, run_review
 from tools.publish.build_publish_pack import build_publish_pack
 from tools.writing.build_write_pack import build_write_pack
 from tools.writing.generate_draft import build_generation_prompt, build_polish_prompt, generate_draft
@@ -52,6 +52,10 @@ class ChapterQualityWorkflowTests(unittest.TestCase):
             self.assertNotIn("STALE_GLOBAL_PLAN", write_pack)
             self.assertIn("Canon Usage Contract", write_pack)
             self.assertIn("private factual reference, not source prose", write_pack)
+            self.assertIn("wording_reuse_allowed: false", write_pack)
+            self.assertIn("Context Selection Contract", write_pack)
+            self.assertIn("Viewpoint Usage Contract", write_pack)
+            self.assertIn("Active Story and Chapter State", write_pack)
             self.assertIn("A decisive confrontation", review_pack)
             self.assertIn("The prior choice has a cost", review_pack)
 
@@ -95,6 +99,11 @@ class ChapterQualityWorkflowTests(unittest.TestCase):
             "schema_version": 1,
             "story_id": "story-1",
             "chapter": 1,
+            "chapter_progression": {
+                "plot": "The practical problem changes.",
+                "character": "The protagonist commits.",
+                "mystery": "A new question opens.",
+            },
             "scenes": [
                 {
                     "scene_id": "scene-1",
@@ -105,6 +114,7 @@ class ChapterQualityWorkflowTests(unittest.TestCase):
                     "opposition": "The witness refuses.",
                     "change_axes": ["knowledge"],
                     "required_change": "The protagonist learns the cost.",
+                    "new_information": "The answer creates a cost.",
                     "physical_setting": "Test room.",
                     "active_characters": ["protagonist"],
                     "required_beats": ["The witness interrupts the plan."],
@@ -211,14 +221,31 @@ gate_status: accept
             contract_path = story / provenance["outputs"]["scene_contract"]
             skeleton_path = story / provenance["outputs"]["scene_skeleton"]
             first_draft_path = story / provenance["outputs"]["first_draft"]
+            deepened_draft_path = story / provenance["outputs"]["deepened_draft"]
+            compressed_draft_path = story / provenance["outputs"]["compressed_draft"]
+            diagnostics_path = story / provenance["outputs"]["diagnostics"]
             contract = json.loads(contract_path.read_text(encoding="utf-8"))
             skeleton = json.loads(skeleton_path.read_text(encoding="utf-8"))
             self.assertEqual(contract["chapter"], 1)
+            self.assertIn("active_canon", provenance["context_tokens_by_category"])
+            self.assertEqual(provenance["generation_pass"], "voice_polish_complete")
+            self.assertIn("repeated_phrase_count", provenance["writing_metrics"])
             self.assertEqual([scene["scene_id"] for scene in skeleton["scenes"]], ["scene-1"])
             self.assertTrue(first_draft_path.read_text(encoding="utf-8").startswith("# Chapter 1"))
+            self.assertTrue(deepened_draft_path.read_text(encoding="utf-8").startswith("# Chapter 1"))
+            self.assertTrue(compressed_draft_path.read_text(encoding="utf-8").startswith("# Chapter 1"))
+            self.assertEqual(list(provenance["outputs"]["scene_drafts"]), ["scene-1"])
+            self.assertEqual(json.loads(diagnostics_path.read_text(encoding="utf-8"))["chapter"], 1)
             self.assertEqual(
                 [stage["name"] for stage in provenance["stages"]],
-                ["scene_planning", "scene_skeleton", "chapter_generation", "prose_polish"],
+                [
+                    "scene_planning",
+                    "scene_skeleton",
+                    "scene_first_drafts",
+                    "narrative_deepening",
+                    "de_duplication",
+                    "prose_polish",
+                ],
             )
             self.assertTrue((contract_path.parent / "generation.json").exists())
 
@@ -275,6 +302,8 @@ special_reviewers:
             self.assertIn("novelness_status: accept", gate)
             self.assertIn("status: accepted", gate)
             self.assertIn("status: accept", outputs["novelness_gate"].read_text(encoding="utf-8"))
+            rebuilt = run_novelness_gate(workspace, "story-1", 1)
+            self.assertIn("status: accept", rebuilt.read_text(encoding="utf-8"))
 
     def test_novelness_gate_maps_a_major_scene_issue_to_scene_rewrite(self) -> None:
         rows = []
@@ -292,6 +321,28 @@ special_reviewers:
             )
 
         self.assertEqual(_novelness_status(rows), ("scene_rewrite", []))
+
+    def test_novelness_gate_rejects_deterministic_source_copying(self) -> None:
+        rows = [
+            {
+                "layer": "standard",
+                "reviewer_id": reviewer_id,
+                "can_block": True,
+                "decision": "accepted",
+                "counts": {"blocker": 0, "major": 0, "minor": 0, "note": 0},
+                "rewrite_scope": "none",
+            }
+            for reviewer_id in ("editor", "pacing", "tone", "character")
+        ]
+
+        self.assertEqual(
+            _novelness_status(rows, {"metrics": {"exact_source_phrase_count": 1}}),
+            ("targeted_revision", []),
+        )
+        self.assertEqual(
+            _novelness_status(rows, {"metrics": {"semantic_repetition_count": 1}}),
+            ("targeted_revision", []),
+        )
 
     def test_failed_rerun_invalidates_an_older_accepted_gate(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

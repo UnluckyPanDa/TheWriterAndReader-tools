@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 
 def _build_pack(args: argparse.Namespace) -> int:
@@ -16,6 +17,33 @@ def _run(args: argparse.Namespace) -> int:
     from tools.review.run_review import run_review
 
     outputs = run_review(args.workspace, args.story, args.chapter, args.config)
+    for name, path in outputs.items():
+        print(f"{name}: {path}")
+    return 0
+
+
+def _novelness(args: argparse.Namespace) -> int:
+    from tools.review.run_review import run_novelness_gate
+
+    print(run_novelness_gate(args.workspace, args.story, args.chapter))
+    return 0
+
+
+def _rereview(args: argparse.Namespace) -> int:
+    from tools.review.rereview import rereview_explanation
+
+    explanation = args.explanation
+    if args.explanation_file:
+        explanation = Path(args.explanation_file).expanduser().read_text(encoding="utf-8")
+    outputs = rereview_explanation(
+        args.workspace,
+        args.story,
+        args.chapter,
+        args.reviewer,
+        explanation,
+        args.config,
+        args.layer,
+    )
     for name, path in outputs.items():
         print(f"{name}: {path}")
     return 0
@@ -38,6 +66,30 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     run_parser.add_argument("--chapter", required=True, type=int)
     run_parser.add_argument("--config", help="Optional config path.")
     run_parser.set_defaults(handler=_run)
+
+    novelness_parser = review_subparsers.add_parser(
+        "novelness",
+        help="Rebuild the Novelness Gate from current reports and diagnostics.",
+    )
+    novelness_parser.add_argument("--workspace", required=True)
+    novelness_parser.add_argument("--story", required=True)
+    novelness_parser.add_argument("--chapter", required=True, type=int)
+    novelness_parser.set_defaults(handler=_novelness)
+
+    rereview_parser = review_subparsers.add_parser(
+        "rereview",
+        help="Run the one-time higher-intelligence review of a writer explanation.",
+    )
+    rereview_parser.add_argument("--workspace", required=True)
+    rereview_parser.add_argument("--story", required=True)
+    rereview_parser.add_argument("--chapter", required=True, type=int)
+    rereview_parser.add_argument("--reviewer", required=True)
+    rereview_parser.add_argument("--layer", choices=("standard", "series", "special"), default="standard")
+    explanation_group = rereview_parser.add_mutually_exclusive_group(required=True)
+    explanation_group.add_argument("--explanation")
+    explanation_group.add_argument("--explanation-file")
+    rereview_parser.add_argument("--config", help="Optional config path.")
+    rereview_parser.set_defaults(handler=_rereview)
 
 
 def main(argv: list[str] | None = None) -> int:

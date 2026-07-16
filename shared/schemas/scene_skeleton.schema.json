@@ -35,7 +35,11 @@
         "exit_condition"
       ],
       "properties": {
-        "scene_id": { "$ref": "#/$defs/nonEmptyString" },
+        "scene_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
         "purpose": { "$ref": "#/$defs/nonEmptyString" },
         "entry_condition": { "$ref": "#/$defs/nonEmptyString" },
         "action_sequence": { "$ref": "#/$defs/nonEmptyStringArray" },

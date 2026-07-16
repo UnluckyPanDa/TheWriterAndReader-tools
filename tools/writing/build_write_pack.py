@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 from shared.lib.chapter_context import load_chapter_inputs
@@ -37,6 +38,59 @@ def _non_empty(text: str, label: str) -> str:
     if stripped:
         return stripped
     return f"No {label} content was found. Add this before production drafting."
+
+
+def _search_tokens(text: str) -> set[str]:
+    return {
+        token.casefold()
+        for token in re.findall(r"[A-Za-z0-9_]+|[\u3400-\u9fff]", text)
+        if len(token) > 1 or "\u3400" <= token <= "\u9fff"
+    }
+
+
+def _fact_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or re.fullmatch(r"[-|: ]+", line):
+            continue
+        line = re.sub(r"^(?:[-*+]\s+|\d+[.)]\s+)", "", line).strip()
+        if line.startswith("|") and line.endswith("|"):
+            cells = [cell.strip() for cell in line.strip("|").split("|") if cell.strip()]
+            line = "; ".join(cells)
+        parts = [part.strip() for part in re.split(r"(?<=[.!?。！？])\s*", line) if part.strip()]
+        candidates.extend(parts or [line])
+    return candidates
+
+
+def _structured_facts(text: str, source_id: str, relevance_text: str, limit: int) -> str:
+    """Render bounded fact records prioritized for the active chapter."""
+    candidates = _fact_candidates(text)
+    if not candidates:
+        return f"- No {source_id} facts were found."
+    relevance = _search_tokens(relevance_text)
+    ranked: list[tuple[int, int, int, str]] = []
+    for index, candidate in enumerate(candidates):
+        tokens = _search_tokens(candidate)
+        binding = bool(re.search(r"\b(?:must|never|always|required|forbidden)\b|必須|不得|不可|永遠", candidate, re.I))
+        ranked.append((1 if binding else 0, len(tokens & relevance), index, candidate))
+    selected = sorted(ranked, key=lambda item: (-item[0], -item[1], item[2]))[:limit]
+    selected.sort(key=lambda item: item[2])
+    return "\n".join(
+        f"- id: {source_id}.{index + 1:03d}; meaning: {candidate}; wording_reuse_allowed: false"
+        for _, _, index, candidate in selected
+    )
+
+
+def write_pack_token_counts(text: str) -> dict[str, int]:
+    """Return approximate token counts for each write-pack category."""
+    counts: dict[str, int] = {}
+    sections = re.split(r"(?m)^## ", text)
+    for section in sections[1:]:
+        heading, _, body = section.partition("\n")
+        category = re.sub(r"\s*\[[A-Z_]+\]\s*$", "", heading).strip().lower().replace(" ", "_")
+        counts[category] = len(re.findall(r"[A-Za-z0-9_]+|[\u3400-\u9fff]", body))
+    return counts
 
 
 def _series_ids(story_yaml: dict[str, Any]) -> list[str]:
@@ -91,15 +145,26 @@ def build_write_pack(
     story_yaml = load_story_yaml(story_path)
 
     writer_voice = load_markdown_file(_writer_profile_path(story_path, story_yaml))
+    viewpoint_profiles = load_markdown_file(story_path / "writer" / "viewpoint_profiles.yaml")
     canon = load_story_canon_file(story_path, "canon.md")
     characters = load_story_canon_file(story_path, "characters.md")
     relationships = load_story_canon_file(story_path, "relationships_and_names.md")
     relationship_summary = relationship_graph_summary(story_path, chapter)
     locations = load_story_canon_file(story_path, "locations_objects.md")
     reveal_lock = load_storyline_file(story_path, "reveal_lock.md")
+    story_state = load_markdown_file(story_path / "state" / "story_status.yaml")
+    chapter_state = load_markdown_file(story_path / "state" / "chapter_status.yaml")
     chapter_inputs = load_chapter_inputs(story_path, chapter)
     chapter_plan = load_storyline_file(story_path, "chapter_plan.md")
     series_context = _load_series_context(workspace_path, story_yaml)
+    relevance_text = "\n".join(
+        (
+            chapter_inputs["brief"],
+            chapter_inputs["context"],
+            chapter_inputs["instruction"],
+            chapter_inputs["previous_handoff"],
+        )
+    )
     legacy_plan = (
         _non_empty(chapter_plan, "chapter plan")
         if chapter_inputs["has_active_direction"] == "no"
@@ -114,10 +179,21 @@ def build_write_pack(
 ## Writer Voice [VOICE]
 {_non_empty(writer_voice, "writer voice")}
 
+## Viewpoint Perception Profiles [VOICE]
+{_non_empty(viewpoint_profiles, "viewpoint perception profile")}
+
+## Viewpoint Usage Contract [CONSTRAINT]
+- Apply only the profile for the active viewpoint character.
+- Express character differences through noticed details, omissions, stress behavior, vocabulary, and decisions.
+- Do not narrate profile labels or explain that a character is rational, empathetic, observant, or similar.
+
 ## Current Task
 - Story ID: {story_id}
 - Chapter: {chapter}
 - Active chapter direction found: {chapter_inputs["has_active_direction"]}.
+
+## Active Story and Chapter State [FACT]
+{_structured_facts(story_state + chr(10) + chapter_state, "state", relevance_text, 30)}
 
 ## Active Chapter Brief [BEAT]
 {chapter_inputs["brief"]}
@@ -132,7 +208,7 @@ def build_write_pack(
 {chapter_inputs["previous_handoff"]}
 
 ## Active Canon [FACT]
-{_non_empty(canon, "canon")}
+{_structured_facts(canon, "canon", relevance_text, 60)}
 
 ## Canon Usage Contract [CONSTRAINT]
 - Canon is private factual reference, not source prose or a vocabulary list.
@@ -142,16 +218,16 @@ def build_write_pack(
 - Prioritize the current chapter objective, character desire and resistance, concrete action, and consequence over wider background.
 
 ## Active Characters [FACT]
-{_non_empty(characters, "character")}
+{_structured_facts(characters, "character", relevance_text, 50)}
 
 ## Relationship and Name Rules [CONSTRAINT]
-{_non_empty(relationships, "relationship and name rule")}
+{_structured_facts(relationships, "relationship", relevance_text, 40)}
 
 ## Chapter-Visible Relationship Graph [FACT]
 {relationship_summary}
 
 ## Active Locations and Objects [FACT]
-{_non_empty(locations, "location and object")}
+{_structured_facts(locations, "location_object", relevance_text, 30)}
 
 ## Chapter Plan and Pacing [REFERENCE]
 {legacy_plan}
@@ -163,7 +239,13 @@ def build_write_pack(
 {chapter_inputs["global_handover"]}
 
 ## Series Context [FACT]
-{series_context}
+{_structured_facts(series_context, "series", relevance_text, 40)}
+
+## Context Selection Contract [CONSTRAINT]
+- Mandatory context contains the scene task, active character and relationship state, relevant canon, reveal restrictions, previous ending, and output rules.
+- Canon, character, relationship, location, and series records are bounded and prioritized against the active chapter direction.
+- Distant history, inactive objects, minor characters, and older summaries remain retrieval context and are omitted unless active chapter inputs reference them.
+- Do not fill unused context capacity with unrelated background.
 
 ## Output Requirements
 - Follow the story language exactly.

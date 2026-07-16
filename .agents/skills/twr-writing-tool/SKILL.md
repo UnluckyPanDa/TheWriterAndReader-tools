@@ -45,8 +45,11 @@ If `twr` is not on `PATH`, report that the shared CLI is not installed or not on
 
 ## Supported Actions
 
-- generate draft
-- refine draft from review
+- build relevance-bounded write packs
+- plan validated scene contracts and skeletons
+- generate scene-by-scene, five-pass chapter drafts
+- diagnose repetition, paragraph movement, and source wording reuse
+- refine drafts with targeted revision modes
 - explain review issue once
 - update handover
 - promote accepted draft to chapter
@@ -72,4 +75,26 @@ Generate draft:
 
 ```bash
 twr write draft --workspace <workspace> --story <story-id> --chapter <chapter>
+```
+
+Plan, draft, and assemble scenes explicitly:
+
+```bash
+twr write plan-scene --workspace <workspace> --story <story-id> --chapter <chapter>
+twr write draft-scene --workspace <workspace> --story <story-id> --chapter <chapter> --scene <scene-id>
+twr write assemble-chapter --workspace <workspace> --story <story-id> --chapter <chapter>
+```
+
+Diagnose and apply a targeted revision:
+
+```bash
+twr write diagnose --workspace <workspace> --story <story-id> --chapter <chapter>
+twr write revise --workspace <workspace> --story <story-id> --chapter <chapter> \
+  --mode <compress|deepen|de-duplicate|improve-dialogue|strengthen-viewpoint|rebalance-exposition|improve-transition|strengthen-hook|prose-polish>
+```
+
+Promote only after the current draft has a complete accepted review gate:
+
+```bash
+twr write accept --workspace <workspace> --story <story-id> --chapter <chapter>
 ```
