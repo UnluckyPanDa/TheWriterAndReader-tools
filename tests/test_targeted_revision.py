@@ -7,7 +7,13 @@ import unittest
 from pathlib import Path
 
 from cli.twr import main as cli_main
-from tools.writing.revise_draft import REVISION_MODES, build_revision_prompt, revise_draft, revise_scene
+from tools.writing.revise_draft import (
+    REVISION_MODES,
+    build_revision_prompt,
+    revise_draft,
+    revise_scene,
+    revision_quality_score,
+)
 from tools.writing.scene_workflow import draft_scene, plan_scenes
 
 
@@ -38,6 +44,30 @@ class TargetedRevisionTests(unittest.TestCase):
             self.assertIn("Apply only the requested revision mode", prompt)
             self.assertIn("Do not add characters", prompt)
 
+    def test_revision_prompt_accepts_a_variation_factor(self) -> None:
+        prompt = build_revision_prompt(
+            "story-1",
+            1,
+            "en",
+            "# Chapter 1",
+            "prose-polish",
+            "# Chapter 1\n\nDraft.",
+            "# Write Pack",
+            {"metrics": {}},
+            "",
+            variation_seed=123,
+            variation_factor=0.7,
+        )
+
+        self.assertIn("variation_seed: 123", prompt)
+        self.assertIn("variation_factor: 0.7", prompt)
+
+    def test_revision_quality_score_penalizes_repetition(self) -> None:
+        self.assertGreater(
+            revision_quality_score({"metrics": {"repeated_phrase_count": 4}}),
+            revision_quality_score({"metrics": {"repeated_phrase_count": 1}}),
+        )
+
     def test_mock_revision_records_mode_and_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = self.copy_workspace(temp_dir)
@@ -52,6 +82,25 @@ class TargetedRevisionTests(unittest.TestCase):
             self.assertTrue((story / provenance["outputs"]["diagnostics_before"]).exists())
             self.assertTrue((story / provenance["outputs"]["diagnostics_after"]).exists())
             self.assertEqual(output.resolve(), (story / "drafts" / "chapter_001.md").resolve())
+
+    def test_revision_can_keep_best_of_multiple_variations(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            story = workspace / "fixture_stories" / "story-1"
+            config = FIXTURES / "mock_config.yaml"
+
+            revise_draft(
+                workspace,
+                "story-1",
+                1,
+                "prose-polish",
+                str(config),
+                {"attempts": 3, "temperature": 0.9},
+            )
+            provenance = json.loads((story / "runs" / "chapter_001_revision.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(provenance["variation_attempts"], 3)
+            self.assertEqual(len(provenance["candidate_scores"]), 3)
 
     def test_cli_diagnose_command(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

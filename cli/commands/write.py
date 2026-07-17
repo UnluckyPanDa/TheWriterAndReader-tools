@@ -51,7 +51,16 @@ def _diagnose(args: argparse.Namespace) -> int:
 def _revise(args: argparse.Namespace) -> int:
     from tools.writing.revise_draft import revise_draft
 
-    print(revise_draft(args.workspace, args.story, args.chapter, args.mode, args.config))
+    print(
+        revise_draft(
+            args.workspace,
+            args.story,
+            args.chapter,
+            args.mode,
+            args.config,
+            {"attempts": args.attempts, "temperature": args.temperature},
+        )
+    )
     return 0
 
 
@@ -131,6 +140,18 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         choices=REVISION_MODES,
     )
     revise_parser.add_argument("--config", help="Optional config path.")
+    revise_parser.add_argument(
+        "--attempts",
+        type=int,
+        default=1,
+        help="Generate this many variations and keep the lowest diagnostic score.",
+    )
+    revise_parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.8,
+        help="Base model temperature for variation attempts.",
+    )
     revise_parser.set_defaults(handler=_revise)
 
     plan_parser = write_subparsers.add_parser("plan-scene", help="Build a validated scene contract and skeleton.")

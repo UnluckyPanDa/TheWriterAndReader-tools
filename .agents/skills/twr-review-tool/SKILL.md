@@ -45,6 +45,19 @@ If `twr` is not on `PATH`, report that the shared CLI is not installed or not on
 8. Load review model routing config.
 9. Build or read review pack.
 
+## Local Ollama Access
+
+- TWR uses its configured local provider directly; an Ollama MCP server is not
+  required.
+- Before a model-backed run, verify the configured Ollama model is available
+  with `ollama list`.
+- If Ollama reports a loopback or sandbox permission error for
+  `localhost:11434` or `127.0.0.1:11434`, retry the same TWR command with
+  narrowly scoped network approval.
+- Treat an unreachable local provider as a failed run. Never replace it with
+  mock output unless the active config explicitly enables mock behavior for a
+  test or fixture.
+
 ## Reviewer Layers
 
 Run reviewers in this order:

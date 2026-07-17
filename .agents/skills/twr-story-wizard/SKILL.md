@@ -38,6 +38,19 @@ tools repo, then write only to the selected external workspace.
 6. Validate output paths before writing.
 7. Write only to the selected workspace.
 
+## Local Ollama Access
+
+- TWR uses its configured local provider directly; an Ollama MCP server is not
+  required.
+- Before a model-backed run, verify the configured Ollama model is available
+  with `ollama list`.
+- If Ollama reports a loopback or sandbox permission error for
+  `localhost:11434` or `127.0.0.1:11434`, retry the same TWR command with
+  narrowly scoped network approval.
+- Treat an unreachable local provider as a failed run. Never replace it with
+  mock output unless the active config explicitly enables mock behavior for a
+  test or fixture.
+
 ## Safety Rules
 
 - Do not silently overwrite canon.
