@@ -22,6 +22,7 @@ from tools.review.run_review import (
     _load_current_record,
     _load_yaml_file,
     _report_path,
+    _required_codex_subagent_threads,
     _review_record_path,
     _render_report_template,
     _reviewer_profile,
@@ -225,6 +226,7 @@ def rereview_explanation(
         raise RuntimeError(f"re-review failed for all configured models: {result.get('attempts', [])}")
     resolved_intelligence = _require_higher_result_intelligence(result, original_intelligence)
     _assert_new_rereview_thread(previous_record, result)
+    subagent_thread_ids = _required_codex_subagent_threads(config, result, reviewer_id)
 
     run_id = str(uuid4())
     draft_sha256 = _draft_hash(story_path, chapter)
@@ -276,6 +278,7 @@ def rereview_explanation(
             "original_intelligence": original_intelligence,
             "resolved_intelligence": resolved_intelligence,
             "draft_sha256": draft_sha256,
+            "codex_subagent_thread_ids": subagent_thread_ids,
         },
     )
     return {

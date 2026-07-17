@@ -13,8 +13,8 @@ from shared.lib.config_loader import load_config
 from shared.lib.model_router import attempt_model_chain, select_model_for_stage
 from shared.lib.path_rules import assert_story_write_allowed
 from shared.lib.run_provenance import require_explicit_runtime_config, write_run_provenance
-from shared.lib.scene_contract import parse_scene_contract
-from shared.lib.scene_skeleton import parse_scene_skeleton
+from shared.lib.scene_contract import SCHEMA_PATH as SCENE_CONTRACT_SCHEMA_PATH, parse_scene_contract
+from shared.lib.scene_skeleton import SCHEMA_PATH as SCENE_SKELETON_SCHEMA_PATH, parse_scene_skeleton
 from shared.lib.safe_write import safe_write_file
 from shared.lib.story_loader import load_markdown_file, load_story_yaml
 from shared.lib.workspace_loader import resolve_story_path
@@ -399,7 +399,17 @@ def generate_scene_contract(
     options: dict[str, Any] | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     chain = select_model_for_stage(config, "scene_planning", fallback_stage="chapter_generation")
-    result = attempt_model_chain(build_scene_contract_prompt(story_id, chapter, write_pack), chain, config, options)
+    router_options = {
+        **(options or {}),
+        "output_schema_path": str(SCENE_CONTRACT_SCHEMA_PATH),
+        "structured_output": True,
+    }
+    result = attempt_model_chain(
+        build_scene_contract_prompt(story_id, chapter, write_pack),
+        chain,
+        config,
+        router_options,
+    )
     if not result.get("ok"):
         raise RuntimeError(f"scene planning failed for all configured models: {result.get('attempts', [])}")
 
@@ -411,7 +421,7 @@ def generate_scene_contract(
             _scene_contract_repair_prompt(story_id, chapter, text, str(first_error)),
             chain,
             config,
-            options,
+            router_options,
         )
         combined_attempts = [*result.get("attempts", []), *repair.get("attempts", [])]
         if not repair.get("ok"):
@@ -433,11 +443,16 @@ def generate_scene_skeleton(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     scene_ids = [str(scene["scene_id"]) for scene in scene_contract["scenes"]]
     chain = select_model_for_stage(config, "scene_skeleton", fallback_stage="chapter_generation")
+    router_options = {
+        **(options or {}),
+        "output_schema_path": str(SCENE_SKELETON_SCHEMA_PATH),
+        "structured_output": True,
+    }
     result = attempt_model_chain(
         build_scene_skeleton_prompt(story_id, chapter, scene_contract),
         chain,
         config,
-        options,
+        router_options,
     )
     if not result.get("ok"):
         raise RuntimeError(f"scene skeleton planning failed for all configured models: {result.get('attempts', [])}")
@@ -456,7 +471,7 @@ def generate_scene_skeleton(
             ),
             chain,
             config,
-            options,
+            router_options,
         )
         combined_attempts = [*result.get("attempts", []), *repair.get("attempts", [])]
         if not repair.get("ok"):

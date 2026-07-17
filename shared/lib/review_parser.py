@@ -216,6 +216,24 @@ def validate_review_run_record(data: Any) -> list[str]:
                 errors.append(f"codex_cli provider requires {field}")
     elif session is not None:
         errors.append("non-threaded review providers must use session null")
+    orchestration = provider.get("orchestration")
+    delegation = session.get("delegation") if isinstance(session, dict) else None
+    if orchestration == "codex_subagent":
+        if provider["type"] != "codex_cli":
+            errors.append("codex_subagent orchestration requires a codex_cli provider")
+        if not isinstance(delegation, dict):
+            errors.append("codex_subagent review requires delegation metadata")
+        else:
+            spawned = delegation["spawned_thread_ids"]
+            completed = delegation["completed_thread_ids"]
+            if len(spawned) != 1:
+                errors.append("codex_subagent review requires exactly one spawned child")
+            if spawned != completed:
+                errors.append("codex_subagent spawned and completed child IDs must match")
+            if isinstance(session, dict) and session.get("thread_id") in spawned:
+                errors.append("codex_subagent child thread must differ from the parent thread")
+    elif delegation is not None:
+        errors.append("delegation metadata requires codex_subagent orchestration")
     return errors
 
 
@@ -319,6 +337,12 @@ def render_review_report(decision: dict[str, Any], runtime: dict[str, Any] | Non
     if runtime:
         provider = runtime.get("provider", {})
         session = runtime.get("session") or {}
+        delegation = session.get("delegation") if isinstance(session, dict) else None
+        child_ids = (
+            ", ".join(delegation.get("completed_thread_ids", []))
+            if isinstance(delegation, dict)
+            else "none"
+        )
         lines.extend(
             [
                 "## Runtime Provenance",
@@ -328,9 +352,11 @@ def render_review_report(decision: dict[str, Any], runtime: dict[str, Any] | Non
                 f"- Codex Profile: {provider.get('codex_profile') or 'none'}",
                 f"- Model: {provider.get('model') or 'unspecified'}",
                 f"- Reasoning Effort: {provider.get('reasoning_effort') or 'unspecified'}",
+                f"- Orchestration: {provider.get('orchestration') or 'direct'}",
                 f"- Session Start: {session.get('start_mode', 'stateless')}",
                 f"- Session Retention: {session.get('retention', 'none')}",
                 f"- Thread ID: {session.get('thread_id') or 'none'}",
+                f"- Subagent Thread IDs: {child_ids}",
             ]
         )
     return "\n".join(lines).rstrip() + "\n"

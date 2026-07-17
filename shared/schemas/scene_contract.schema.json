@@ -7,6 +7,7 @@
   "required": ["schema_version", "story_id", "chapter", "chapter_progression", "scenes"],
   "properties": {
     "schema_version": {
+      "type": "integer",
       "const": 1
     },
     "story_id": {
@@ -85,6 +86,7 @@
           "minItems": 1,
           "uniqueItems": true,
           "items": {
+            "type": "string",
             "enum": [
               "knowledge",
               "emotion",

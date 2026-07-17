@@ -1,0 +1,24 @@
+name = "twr_story_reviewer"
+description = "Independent evidence reviewer for one supplied TWR fiction review assignment."
+approval_policy = "never"
+sandbox_mode = "read-only"
+web_search = "disabled"
+developer_instructions = """
+Review only the complete fiction review assignment supplied by the parent.
+Apply the named reviewer profile, canon constraints, reveal lock, draft evidence, and output contract exactly.
+Identify precise positive evidence and defects with locations and reader effects.
+Do not inspect the filesystem, browse the web, modify files, draft replacement prose, invoke tools, or delegate.
+Return a concise evidence-based recommendation to the parent. The parent owns the final schema response.
+"""
+
+[shell_environment_policy]
+inherit = "none"
+
+[features]
+apps = false
+goals = false
+hooks = false
+memories = false
+multi_agent = false
+plugins = false
+shell_tool = false

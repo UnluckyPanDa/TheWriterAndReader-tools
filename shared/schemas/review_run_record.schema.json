@@ -17,7 +17,7 @@
     "decision"
   ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"type": "integer", "const": 1},
     "run_id": {"type": "string", "minLength": 1},
     "recorded_at": {"type": "string", "format": "date-time"},
     "draft_sha256": {
@@ -32,7 +32,7 @@
       "required": ["id", "type"],
       "properties": {
         "id": {"type": "string", "minLength": 1},
-        "type": {"enum": ["standard", "series", "special"]}
+        "type": {"type": "string", "enum": ["standard", "series", "special"]}
       }
     },
     "provider": {
@@ -56,7 +56,11 @@
         "model": {"type": ["string", "null"]},
         "reasoning_effort": {"type": ["string", "null"]},
         "requested_intelligence": {"type": ["string", "null"]},
-        "resolved_intelligence": {"type": ["string", "null"]}
+        "resolved_intelligence": {"type": ["string", "null"]},
+        "orchestration": {
+          "type": "string",
+          "enum": ["direct", "codex_subagent"]
+        }
       }
     },
     "session": {
@@ -67,10 +71,36 @@
           "additionalProperties": false,
           "required": ["start_mode", "retention", "thread_id", "resumed_from"],
           "properties": {
-            "start_mode": {"enum": ["fresh", "resumed"]},
-            "retention": {"enum": ["persisted", "ephemeral"]},
+            "start_mode": {"type": "string", "enum": ["fresh", "resumed"]},
+            "retention": {"type": "string", "enum": ["persisted", "ephemeral"]},
             "thread_id": {"type": ["string", "null"]},
-            "resumed_from": {"type": ["string", "null"]}
+            "resumed_from": {"type": ["string", "null"]},
+            "delegation": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "mode",
+                "required",
+                "spawned_thread_ids",
+                "completed_thread_ids"
+              ],
+              "properties": {
+                "mode": {"type": "string", "const": "codex_native"},
+                "required": {"type": "boolean", "const": true},
+                "spawned_thread_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {"type": "string", "minLength": 1}
+                },
+                "completed_thread_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {"type": "string", "minLength": 1}
+                }
+              }
+            }
           }
         }
       ]

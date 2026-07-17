@@ -23,21 +23,26 @@ Real config belongs outside this repository at:
 Use `config.example.yaml` as the import/export shape. Online API and Codex CLI
 providers are disabled in the example until the user explicitly enables them.
 
-The optional Codex review route requires its dedicated read-only profile:
+The optional Codex writing and review routes use dedicated read-only profiles.
+Reviews also use one bounded evidence subagent:
 
 ```text
 mkdir -p ~/.codex/twr-reviewer
-cp shared/templates/codex/twr-reviewer.config.toml ~/.codex/twr-reviewer/
+mkdir -p ~/.codex/twr-reviewer/agents
+cp shared/templates/codex/twr-reviewer.config.toml shared/templates/codex/twr-writer.config.toml ~/.codex/twr-reviewer/
+cp shared/templates/codex/agents/twr_story_reviewer.toml ~/.codex/twr-reviewer/agents/
 CODEX_HOME=~/.codex/twr-reviewer codex login
 twr doctor --config ~/.config/the-writer-and-reader/config.yaml
 ```
 
-Enable the `codex` provider and select `codex_review` only after that check
+Enable `codex` for reviews or `codex_writer` for writing only after that check
 passes. The configured `codex_home` must be that isolated directory and must not
-contain `AGENTS.md` or `AGENTS.override.md`. Each reviewer starts a fresh Codex session. Set `session.retention` to
-`persisted` to retain the thread record or `ephemeral` to discard it after the
-run. `review_policy.codex_intelligence_map` resolves each reviewer intelligence
-level to an explicit Codex model and reasoning effort.
+contain `AGENTS.md` or `AGENTS.override.md`. Each operation starts a fresh Codex
+session. Set `session.retention` to `persisted` to retain the parent thread or
+`ephemeral` to discard it after the run. The writing and review intelligence
+maps resolve each abstract level to an explicit Codex model and reasoning
+effort. Configured subagent reviews fail closed unless the child spawn, wait,
+completion, and parent ordering are present in the Codex JSONL stream.
 
 ## Wizard Scaffolds
 

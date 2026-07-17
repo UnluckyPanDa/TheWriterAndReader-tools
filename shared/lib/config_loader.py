@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,30 @@ from shared.lib.yaml_utils import dump_yaml, load_yaml_text
 SECRET_KEYS = {"api_key", "api_key_env", "token", "secret", "password"}
 INTELLIGENCE_LEVELS = ("low", "medium", "high", "very_high")
 CODEX_REASONING_EFFORTS = {"minimal", "low", "medium", "high", "xhigh"}
+CODEX_CAPABILITIES = {"review", "writing"}
+CODEX_AGENT_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _validate_codex_intelligence_map(
+    config: dict[str, Any],
+    policy_key: str,
+    label: str,
+) -> list[str]:
+    policy = config.get(policy_key, {})
+    mappings = policy.get("codex_intelligence_map") if isinstance(policy, dict) else None
+    if not isinstance(mappings, dict):
+        return [f"{policy_key}.codex_intelligence_map must be a mapping"]
+    messages: list[str] = []
+    for level in INTELLIGENCE_LEVELS:
+        mapping = mappings.get(level)
+        if not isinstance(mapping, dict):
+            messages.append(f"{label} intelligence mapping is missing: {level}")
+            continue
+        if not isinstance(mapping.get("model"), str) or not str(mapping.get("model", "")).strip():
+            messages.append(f"{label} intelligence mapping {level} requires a model")
+        if mapping.get("reasoning_effort") not in CODEX_REASONING_EFFORTS:
+            messages.append(f"{label} intelligence mapping {level} has invalid reasoning_effort")
+    return messages
 
 
 def get_default_config_path() -> Path:
@@ -66,11 +91,15 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             messages.append(f"missing or invalid config key: {key}")
     configured_providers = config.get("providers", {})
     providers = configured_providers if isinstance(configured_providers, dict) else {}
-    codex_providers = []
+    codex_capabilities: set[str] = set()
     for name, provider in providers.items():
         if not isinstance(provider, dict) or provider.get("type") != "codex_cli":
             continue
-        codex_providers.append(str(name))
+        capability = provider.get("capability", "review")
+        if capability not in CODEX_CAPABILITIES:
+            messages.append(f"Codex provider {name} capability must be review or writing")
+        else:
+            codex_capabilities.add(str(capability))
         if not isinstance(provider.get("command"), str) or not str(provider.get("command", "")).strip():
             messages.append(f"Codex provider {name} requires a non-empty command")
         if not isinstance(provider.get("profile"), str) or not str(provider.get("profile", "")).strip():
@@ -90,6 +119,22 @@ def validate_config(config: dict[str, Any]) -> list[str]:
                 messages.append(
                     f"Codex provider {name} session.retention must be persisted or ephemeral"
                 )
+        subagents = provider.get("subagents")
+        if subagents is not None and not isinstance(subagents, dict):
+            messages.append(f"Codex provider {name} subagents must be a mapping")
+        elif isinstance(subagents, dict):
+            required = subagents.get("required", False)
+            if not isinstance(required, bool):
+                messages.append(f"Codex provider {name} subagents.required must be a boolean")
+            elif required:
+                if capability != "review":
+                    messages.append(f"Codex writing provider {name} cannot require review subagents")
+                count = subagents.get("count")
+                if type(count) is not int or count != 1:
+                    messages.append(f"Codex provider {name} subagents.count must be exactly 1")
+                agent = subagents.get("agent")
+                if not isinstance(agent, str) or not CODEX_AGENT_NAME.fullmatch(agent):
+                    messages.append(f"Codex provider {name} subagents.agent must be a safe agent name")
     for name, provider in config.get("model_profiles", {}).items():
         if not isinstance(provider, dict):
             messages.append(f"model profile {name} must be a mapping")
@@ -104,23 +149,10 @@ def validate_config(config: dict[str, Any]) -> list[str]:
         for profile in profiles:
             if profile not in config.get("model_profiles", {}):
                 messages.append(f"fallback chain {group} references unknown profile {profile}")
-    if codex_providers:
-        review_policy = config.get("review_policy", {})
-        mappings = review_policy.get("codex_intelligence_map") if isinstance(review_policy, dict) else None
-        if not isinstance(mappings, dict):
-            messages.append("review_policy.codex_intelligence_map must be a mapping")
-        else:
-            for level in INTELLIGENCE_LEVELS:
-                mapping = mappings.get(level)
-                if not isinstance(mapping, dict):
-                    messages.append(f"Codex intelligence mapping is missing: {level}")
-                    continue
-                if not isinstance(mapping.get("model"), str) or not str(mapping.get("model", "")).strip():
-                    messages.append(f"Codex intelligence mapping {level} requires a model")
-                if mapping.get("reasoning_effort") not in CODEX_REASONING_EFFORTS:
-                    messages.append(
-                        f"Codex intelligence mapping {level} has invalid reasoning_effort"
-                    )
+    if "review" in codex_capabilities:
+        messages.extend(_validate_codex_intelligence_map(config, "review_policy", "Codex"))
+    if "writing" in codex_capabilities:
+        messages.extend(_validate_codex_intelligence_map(config, "writing_policy", "Codex writing"))
     return messages
 
 

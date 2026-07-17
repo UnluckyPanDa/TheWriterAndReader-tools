@@ -58,7 +58,14 @@ def select_model_for_stage(
     provider_group = stage.get("provider_group")
     if not isinstance(provider_group, str):
         raise ValueError(f"Writing stage '{stage_name}' is missing provider_group")
-    return get_fallback_chain(config, provider_group)
+    requested_intelligence = str(stage.get("intelligence", "medium"))
+    mappings = config.get("writing_policy", {}).get("codex_intelligence_map", {})
+    return _route_codex_intelligence(
+        get_fallback_chain(config, provider_group),
+        requested_intelligence,
+        mappings,
+        capability="writing",
+    )
 
 
 def select_model_for_reviewer(config: dict[str, Any], reviewer_config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -66,9 +73,23 @@ def select_model_for_reviewer(config: dict[str, Any], reviewer_config: dict[str,
     provider_group = reviewer_config.get("provider_group")
     if not isinstance(provider_group, str):
         provider_group = config.get("review_policy", {}).get("provider_group", "local_first")
-    chain = get_fallback_chain(config, provider_group)
     requested_intelligence = str(reviewer_config.get("intelligence", "medium"))
     mappings = config.get("review_policy", {}).get("codex_intelligence_map", {})
+    return _route_codex_intelligence(
+        get_fallback_chain(config, provider_group),
+        requested_intelligence,
+        mappings,
+        capability="review",
+    )
+
+
+def _route_codex_intelligence(
+    chain: list[dict[str, Any]],
+    requested_intelligence: str,
+    mappings: Any,
+    capability: str,
+) -> list[dict[str, Any]]:
+    """Apply a capability-specific model and reasoning mapping to Codex routes."""
     resolved: list[dict[str, Any]] = []
     for profile in chain:
         profile_intelligence = profile.get("intelligence")
@@ -86,9 +107,17 @@ def select_model_for_reviewer(config: dict[str, Any], reviewer_config: dict[str,
         if not isinstance(provider_config, dict) or provider_config.get("type") != "codex_cli":
             resolved.append(routed_profile)
             continue
+        provider_capability = provider_config.get("capability", "review")
+        if provider_capability != capability:
+            raise ValueError(
+                f"Codex {provider_capability} provider cannot serve {capability} routing"
+            )
+        if requested_intelligence not in INTELLIGENCE_LEVELS:
+            raise ValueError(f"Unknown {capability} intelligence: {requested_intelligence}")
         mapping = mappings.get(requested_intelligence) if isinstance(mappings, dict) else None
         if not isinstance(mapping, dict):
-            raise ValueError(f"Codex intelligence mapping is missing: {requested_intelligence}")
+            label = "Codex" if capability == "review" else "Codex writing"
+            raise ValueError(f"{label} intelligence mapping is missing: {requested_intelligence}")
         model = mapping.get("model")
         reasoning_effort = mapping.get("reasoning_effort")
         if (
@@ -96,7 +125,8 @@ def select_model_for_reviewer(config: dict[str, Any], reviewer_config: dict[str,
             or not model.strip()
             or reasoning_effort not in CODEX_REASONING_EFFORTS
         ):
-            raise ValueError(f"Codex intelligence mapping is invalid: {requested_intelligence}")
+            label = "Codex" if capability == "review" else "Codex writing"
+            raise ValueError(f"{label} intelligence mapping is invalid: {requested_intelligence}")
         resolved.append(
             {
                 **routed_profile,
@@ -160,6 +190,8 @@ def attempt_model_chain(
             "model",
             "reasoning_effort",
             "codex_profile",
+            "capability",
+            "orchestration",
             "requested_intelligence",
             "resolved_intelligence",
             "session",
@@ -183,6 +215,8 @@ def attempt_model_chain(
                 "model",
                 "reasoning_effort",
                 "codex_profile",
+                "capability",
+                "orchestration",
                 "requested_intelligence",
                 "resolved_intelligence",
                 "session",

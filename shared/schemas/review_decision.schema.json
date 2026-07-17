@@ -21,12 +21,15 @@
     "reviewer_notes"
   ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"type": "integer", "const": 1},
     "reviewer_id": {"type": "string", "minLength": 1},
-    "reviewer_type": {"enum": ["standard", "series", "special"]},
+    "reviewer_type": {"type": "string", "enum": ["standard", "series", "special"]},
     "story_id": {"type": "string", "minLength": 1},
     "chapter": {"type": "integer", "minimum": 1},
-    "status": {"enum": ["pass", "pass_with_minor_issues", "needs_revision", "blocked"]},
+    "status": {
+      "type": "string",
+      "enum": ["pass", "pass_with_minor_issues", "needs_revision", "blocked"]
+    },
     "summary": {"type": "string", "minLength": 1},
     "evidence": {
       "type": "array",
@@ -73,6 +76,7 @@
         "properties": {
           "issue_id": {"type": "string", "pattern": "^R[0-9]{3,}$"},
           "issue_type": {
+            "type": "string",
             "enum": [
               "continuity",
               "reveal_timing",
@@ -97,13 +101,16 @@
               "other"
             ]
           },
-          "severity": {"enum": ["blocker", "major", "minor", "note"]},
+          "severity": {"type": "string", "enum": ["blocker", "major", "minor", "note"]},
           "location": {"type": "string", "minLength": 1},
           "observation": {"type": "string", "minLength": 1},
           "reader_effect": {"type": "string", "minLength": 1},
-          "review_scope": {"enum": ["local", "scene", "chapter"]},
+          "review_scope": {"type": "string", "enum": ["local", "scene", "chapter"]},
           "rewrite_required": {"type": "boolean"},
-          "rewrite_scope": {"enum": ["none", "sentence", "paragraph", "scene", "chapter"]},
+          "rewrite_scope": {
+            "type": "string",
+            "enum": ["none", "sentence", "paragraph", "scene", "chapter"]
+          },
           "suggested_fix": {"type": "string", "minLength": 1}
         }
       }
@@ -114,10 +121,13 @@
       "required": ["required", "scope"],
       "properties": {
         "required": {"type": "boolean"},
-        "scope": {"enum": ["none", "sentence", "paragraph", "scene", "chapter"]}
+        "scope": {
+          "type": "string",
+          "enum": ["none", "sentence", "paragraph", "scene", "chapter"]
+        }
       }
     },
-    "gate_recommendation": {"enum": ["accept", "revise", "block"]},
+    "gate_recommendation": {"type": "string", "enum": ["accept", "revise", "block"]},
     "carry_forward_tasks": {
       "type": "array",
       "items": {"type": "string", "minLength": 1}

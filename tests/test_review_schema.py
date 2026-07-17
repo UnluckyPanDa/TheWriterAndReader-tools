@@ -5,6 +5,7 @@ import json
 import unittest
 
 from shared.lib.review_parser import (
+    REVIEW_DECISION_SCHEMA_PATH,
     parse_review_decision,
     parse_review_run_record,
     render_review_report,
@@ -12,6 +13,7 @@ from shared.lib.review_parser import (
     validate_review_decision,
     validate_review_run_record,
 )
+from tools.review.run_review import _required_codex_subagent_threads
 
 
 def valid_decision() -> dict[str, object]:
@@ -79,7 +81,7 @@ def valid_run_record(
             "type": provider_type,
             "model_profile": "codex_reviewer" if codex else "mock_reviewer",
             "codex_profile": "twr-reviewer" if codex else None,
-            "model": "gpt-5.5" if codex else None,
+            "model": "gpt-5.6-sol" if codex else None,
             "reasoning_effort": "high" if codex else None,
             "requested_intelligence": "high" if codex else None,
             "resolved_intelligence": "high" if codex else None,
@@ -95,6 +97,21 @@ def valid_run_record(
 
 
 class ReviewDecisionSchemaTests(unittest.TestCase):
+    def test_const_and_enum_nodes_declare_types_for_codex_structured_output(self) -> None:
+        schema = json.loads(REVIEW_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+        def assert_typed(node: object, path: str = "$") -> None:
+            if isinstance(node, dict):
+                if "const" in node or "enum" in node:
+                    self.assertIn("type", node, path)
+                for key, value in node.items():
+                    assert_typed(value, f"{path}.{key}")
+            elif isinstance(node, list):
+                for index, value in enumerate(node):
+                    assert_typed(value, f"{path}[{index}]")
+
+        assert_typed(schema)
+
     def test_valid_decision_parses_and_renders_canonical_markdown(self) -> None:
         decision = valid_decision()
 
@@ -173,6 +190,42 @@ class ReviewDecisionSchemaTests(unittest.TestCase):
 
 
 class ReviewRunRecordSchemaTests(unittest.TestCase):
+    def test_configured_codex_review_rejects_missing_subagent_proof(self) -> None:
+        config = {
+            "providers": {
+                "codex": {
+                    "type": "codex_cli",
+                    "subagents": {"required": True, "count": 1},
+                }
+            }
+        }
+        result = {
+            "provider": "codex",
+            "provider_type": "codex_cli",
+            "orchestration": "direct",
+            "session": {
+                "start_mode": "fresh",
+                "retention": "persisted",
+                "thread_id": "thread-parent",
+                "resumed_from": None,
+            },
+        }
+
+        with self.assertRaisesRegex(RuntimeError, "did not complete its required Codex subagent"):
+            _required_codex_subagent_threads(config, result, "style")
+
+        result["orchestration"] = "codex_subagent"
+        result["session"]["delegation"] = {
+            "mode": "codex_native",
+            "required": True,
+            "spawned_thread_ids": ["thread-child"],
+            "completed_thread_ids": ["thread-child"],
+        }
+        self.assertEqual(
+            _required_codex_subagent_threads(config, result, "style"),
+            ["thread-child"],
+        )
+
     def test_stateless_provider_record_is_valid_and_round_trips(self) -> None:
         record = valid_run_record()
 
@@ -193,6 +246,58 @@ class ReviewRunRecordSchemaTests(unittest.TestCase):
                 )
 
                 self.assertEqual(validate_review_run_record(record), [])
+
+    def test_codex_record_preserves_verified_subagent_delegation(self) -> None:
+        record = valid_run_record(
+            provider_type="codex_cli",
+            session={
+                "start_mode": "fresh",
+                "retention": "persisted",
+                "thread_id": "thread-parent",
+                "resumed_from": None,
+                "delegation": {
+                    "mode": "codex_native",
+                    "required": True,
+                    "spawned_thread_ids": ["thread-child"],
+                    "completed_thread_ids": ["thread-child"],
+                },
+            },
+        )
+        record["provider"]["orchestration"] = "codex_subagent"
+
+        self.assertEqual(validate_review_run_record(record), [])
+        self.assertEqual(parse_review_run_record(json.dumps(record)), record)
+        report = render_review_report(record["decision"], record)
+        self.assertIn("- Orchestration: codex_subagent", report)
+        self.assertIn("- Subagent Thread IDs: thread-child", report)
+
+        record["session"]["delegation"]["completed_thread_ids"] = ["another-child"]
+        self.assertIn(
+            "codex_subagent spawned and completed child IDs must match",
+            validate_review_run_record(record),
+        )
+
+    def test_delegation_metadata_requires_subagent_orchestration(self) -> None:
+        record = valid_run_record(
+            provider_type="codex_cli",
+            session={
+                "start_mode": "fresh",
+                "retention": "persisted",
+                "thread_id": "thread-parent",
+                "resumed_from": None,
+                "delegation": {
+                    "mode": "codex_native",
+                    "required": True,
+                    "spawned_thread_ids": ["thread-child"],
+                    "completed_thread_ids": ["thread-child"],
+                },
+            },
+        )
+
+        self.assertIn(
+            "delegation metadata requires codex_subagent orchestration",
+            validate_review_run_record(record),
+        )
 
     def test_codex_record_rejects_resumed_or_unidentified_session(self) -> None:
         record = valid_run_record(

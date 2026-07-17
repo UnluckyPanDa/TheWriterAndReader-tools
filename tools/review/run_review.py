@@ -152,7 +152,41 @@ def _provider_record(result: dict[str, Any]) -> dict[str, Any]:
             if isinstance(result.get("resolved_intelligence"), str)
             else None
         ),
+        "orchestration": str(result.get("orchestration") or "direct"),
     }
+
+
+def _required_codex_subagent_threads(
+    config: dict[str, Any],
+    result: dict[str, Any],
+    reviewer_id: str,
+) -> list[str]:
+    """Return verified child IDs when the successful provider requires delegation."""
+    if result.get("provider_type") != "codex_cli":
+        return []
+    provider_id = result.get("provider")
+    providers = config.get("providers", {})
+    provider = providers.get(provider_id) if isinstance(providers, dict) else None
+    subagents = provider.get("subagents") if isinstance(provider, dict) else None
+    if not isinstance(subagents, dict) or subagents.get("required") is not True:
+        return []
+    session = result.get("session")
+    delegation = session.get("delegation") if isinstance(session, dict) else None
+    spawned = delegation.get("spawned_thread_ids") if isinstance(delegation, dict) else None
+    completed = delegation.get("completed_thread_ids") if isinstance(delegation, dict) else None
+    expected_count = subagents.get("count")
+    if (
+        result.get("orchestration") != "codex_subagent"
+        or type(expected_count) is not int
+        or expected_count != 1
+        or not isinstance(spawned, list)
+        or not isinstance(completed, list)
+        or len(spawned) != expected_count
+        or spawned != completed
+        or any(not isinstance(thread_id, str) or not thread_id.strip() for thread_id in spawned)
+    ):
+        raise RuntimeError(f"reviewer {reviewer_id} did not complete its required Codex subagent")
+    return [str(thread_id) for thread_id in spawned]
 
 
 def _write_review_report(
@@ -663,11 +697,14 @@ def run_review(
         attempts: list[dict[str, Any]] = []
         pending_records: list[tuple[Path, Path, dict[str, Any]]] = []
         codex_thread_ids: set[str] = set()
+        codex_subagent_thread_ids: set[str] = set()
+        seen_codex_threads: set[str] = set()
         router_options = {**(options or {}), "output_schema_path": str(REVIEW_DECISION_SCHEMA_PATH)}
         for layer, reviewer_id, settings in review_specs:
             profile = _reviewer_profile(story_path, layer, reviewer_id, settings)
             prompt = _review_prompt(story_id, chapter, layer, reviewer_id, settings, profile, review_pack)
-            result = attempt_model_chain(prompt, _model_chain(config, settings), config, router_options)
+            model_chain = _model_chain(config, settings)
+            result = attempt_model_chain(prompt, model_chain, config, router_options)
             if not result.get("ok"):
                 raise RuntimeError(f"reviewer {reviewer_id} failed for all configured models: {result.get('attempts', [])}")
             if result.get("provider_type") == "codex_cli":
@@ -675,9 +712,15 @@ def run_review(
                 thread_id = session.get("thread_id") if isinstance(session, dict) else None
                 if not isinstance(thread_id, str) or not thread_id.strip():
                     raise RuntimeError(f"reviewer {reviewer_id} did not return a fresh Codex thread")
-                if thread_id in codex_thread_ids:
+                if thread_id in seen_codex_threads:
                     raise RuntimeError(f"reviewer {reviewer_id} reused Codex thread {thread_id}")
                 codex_thread_ids.add(thread_id)
+                seen_codex_threads.add(thread_id)
+                for child_id in _required_codex_subagent_threads(config, result, reviewer_id):
+                    if child_id in seen_codex_threads:
+                        raise RuntimeError(f"reviewer {reviewer_id} reused Codex thread {child_id}")
+                    codex_subagent_thread_ids.add(child_id)
+                    seen_codex_threads.add(child_id)
             report_path, record_path, record = _write_review_report(
                 story_path,
                 chapter,
@@ -731,6 +774,7 @@ def run_review(
                 "run_id": run_id,
                 "draft_sha256": draft_sha256,
                 "codex_thread_ids": sorted(codex_thread_ids),
+                "codex_subagent_thread_ids": sorted(codex_subagent_thread_ids),
             },
         )
         return {

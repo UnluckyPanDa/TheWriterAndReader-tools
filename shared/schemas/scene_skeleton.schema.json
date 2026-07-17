@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "story_id", "chapter", "scenes"],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "type": "integer", "const": 1 },
     "story_id": { "type": "string", "minLength": 1 },
     "chapter": { "type": "integer", "minimum": 1 },
     "scenes": {

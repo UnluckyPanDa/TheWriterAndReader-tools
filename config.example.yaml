@@ -19,6 +19,7 @@ providers:
     api_key_env: OPENAI_API_KEY
   codex:
     type: codex_cli
+    capability: review
     enabled: false
     command: codex
     profile: twr-reviewer
@@ -27,6 +28,21 @@ providers:
     session:
       start_mode: fresh
       retention: persisted
+    subagents:
+      required: true
+      count: 1
+      agent: twr_story_reviewer
+  codex_writer:
+    type: codex_cli
+    capability: writing
+    enabled: false
+    command: codex
+    profile: twr-writer
+    codex_home: ~/.codex/twr-reviewer
+    timeout_seconds: 900
+    session:
+      start_mode: fresh
+      retention: ephemeral
 model_profiles:
   mock_writer:
     provider: mock
@@ -46,6 +62,9 @@ model_profiles:
   codex_reviewer:
     provider: codex
     context_window: 128000
+  codex_writer:
+    provider: codex_writer
+    context_window: 128000
 fallback_chains:
   mock_first:
     - mock_writer
@@ -54,6 +73,9 @@ fallback_chains:
   local_first_with_online_fallback:
     - local_writer
     - online_writer
+  local_first_with_codex_fallback:
+    - local_writer
+    - codex_writer
   online_allowed:
     - local_writer
     - online_writer
@@ -65,57 +87,67 @@ writing_stages:
   scene_planning:
     intelligence: high
     creativity: medium
-    provider_group: local_first_with_online_fallback
+    provider_group: local_first_with_codex_fallback
   scene_skeleton:
     intelligence: high
     creativity: medium
-    provider_group: local_first_with_online_fallback
+    provider_group: local_first_with_codex_fallback
   chapter_generation:
     intelligence: high
     creativity: high
-    provider_group: local_first_with_online_fallback
+    provider_group: local_first_with_codex_fallback
   narrative_deepening:
     intelligence: high
     creativity: high
-    provider_group: local_first_with_online_fallback
+    provider_group: local_first_with_codex_fallback
   de_duplication:
     intelligence: medium
     creativity: low
-    provider_group: local_first_with_online_fallback
+    provider_group: local_first_with_codex_fallback
   prose_polish:
     intelligence: medium
     creativity: medium
-    provider_group: local_first_with_online_fallback
+    provider_group: local_first_with_codex_fallback
   chapter_revision:
     intelligence: high
     creativity: medium
-    provider_group: local_first_with_online_fallback
+    provider_group: local_first_with_codex_fallback
   handover_update:
     intelligence: medium
     creativity: low
-    provider_group: local_first_with_online_fallback
+    provider_group: local_first_with_codex_fallback
   issue_explanation:
     intelligence: high
     creativity: low
-    provider_group: local_first_with_online_fallback
-  handover_update:
-    intelligence: low
-    creativity: low
-    provider_group: local_first
+    provider_group: local_first_with_codex_fallback
+writing_policy:
+  codex_intelligence_map:
+    low:
+      model: gpt-5.6-terra
+      reasoning_effort: high
+    medium:
+      model: gpt-5.6-terra
+      reasoning_effort: high
+    high:
+      model: gpt-5.6-terra
+      reasoning_effort: high
+    very_high:
+      model: gpt-5.6-terra
+      reasoning_effort: high
 review_policy:
   codex_intelligence_map:
     low:
-      model: gpt-5.5
-      reasoning_effort: low
+      model: gpt-5.6-sol
+      reasoning_effort: high
     medium:
-      model: gpt-5.5
-      reasoning_effort: medium
+      model: gpt-5.6-sol
+      reasoning_effort: high
     high:
-      model: gpt-5.5
+      model: gpt-5.6-sol
       reasoning_effort: high
     very_high:
-      model: gpt-5.5
-      reasoning_effort: xhigh
+      model: gpt-5.6-sol
+      reasoning_effort: high
   rereview_after_writer_explanation:
     minimum_intelligence: very_high
     provider_group: codex_review

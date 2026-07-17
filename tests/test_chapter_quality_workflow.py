@@ -8,13 +8,21 @@ from pathlib import Path
 from unittest.mock import patch
 
 from shared.lib.review_parser import recommended_gate_status, validate_review_report
-from shared.lib.scene_contract import parse_scene_contract
-from shared.lib.scene_skeleton import parse_scene_skeleton
+from shared.lib.config_loader import load_config_example
+from shared.lib.model_router import _mock_response
+from shared.lib.scene_contract import SCHEMA_PATH as SCENE_CONTRACT_SCHEMA_PATH, parse_scene_contract
+from shared.lib.scene_skeleton import SCHEMA_PATH as SCENE_SKELETON_SCHEMA_PATH, parse_scene_skeleton
 from tools.review.build_review_pack import build_review_pack
 from tools.review.run_review import _novelness_status, rebuild_review_gate, run_novelness_gate, run_review
 from tools.publish.build_publish_pack import build_publish_pack
 from tools.writing.build_write_pack import build_write_pack
-from tools.writing.generate_draft import build_generation_prompt, build_polish_prompt, generate_draft
+from tools.writing.generate_draft import (
+    build_generation_prompt,
+    build_polish_prompt,
+    generate_draft,
+    generate_scene_contract,
+    generate_scene_skeleton,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -128,6 +136,46 @@ class ChapterQualityWorkflowTests(unittest.TestCase):
         valid["scenes"][0]["change_axes"] = []
         with self.assertRaisesRegex(ValueError, "invalid scene contract"):
             parse_scene_contract(json.dumps(valid), "story-1", 1)
+
+    def test_scene_planning_schemas_are_compatible_with_codex_structured_output(self) -> None:
+        def assert_typed(node: object, path: str = "$") -> None:
+            if isinstance(node, dict):
+                if "const" in node or "enum" in node:
+                    self.assertIn("type", node, path)
+                for key, value in node.items():
+                    assert_typed(value, f"{path}.{key}")
+            elif isinstance(node, list):
+                for index, value in enumerate(node):
+                    assert_typed(value, f"{path}[{index}]")
+
+        for schema_path in (SCENE_CONTRACT_SCHEMA_PATH, SCENE_SKELETON_SCHEMA_PATH):
+            with self.subTest(schema=schema_path.name):
+                assert_typed(json.loads(schema_path.read_text(encoding="utf-8")))
+
+    def test_scene_planning_passes_structured_output_schemas_to_model_routes(self) -> None:
+        def model_result(prompt: str, *_args: object, **_kwargs: object) -> dict[str, object]:
+            return {"ok": True, "text": _mock_response(prompt), "attempts": []}
+
+        with patch("tools.writing.generate_draft.attempt_model_chain", side_effect=model_result) as attempt:
+            contract, _ = generate_scene_contract(
+                load_config_example(),
+                "story-1",
+                1,
+                "Minimal write pack.",
+                None,
+            )
+            generate_scene_skeleton(load_config_example(), "story-1", 1, contract, None)
+
+        self.assertEqual(
+            attempt.call_args_list[0].args[3]["output_schema_path"],
+            str(SCENE_CONTRACT_SCHEMA_PATH),
+        )
+        self.assertIs(attempt.call_args_list[0].args[3]["structured_output"], True)
+        self.assertEqual(
+            attempt.call_args_list[1].args[3]["output_schema_path"],
+            str(SCENE_SKELETON_SCHEMA_PATH),
+        )
+        self.assertIs(attempt.call_args_list[1].args[3]["structured_output"], True)
 
     def test_scene_skeleton_must_match_contract_order(self) -> None:
         skeleton = {

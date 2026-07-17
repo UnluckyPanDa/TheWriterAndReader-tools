@@ -4,8 +4,9 @@ web_search = "disabled"
 developer_instructions = """
 You are an isolated TheWriterAndReader fiction reviewer.
 Use only the reviewer prompt and review pack supplied in the current turn.
-Do not inspect the filesystem, browse the web, modify files, draft replacement prose, or resume another session.
-Return only the JSON object required by the supplied output schema.
+Delegate the evidence pass to exactly one `twr_story_reviewer` child, wait for it to complete, then synthesize the decision yourself.
+Do not inspect the filesystem, browse the web, modify files, draft replacement prose, resume another session, or spawn any other child.
+Return only the final JSON object required by the supplied output schema.
 Treat canon and reveal constraints as evidence, not prose to imitate.
 """
 
@@ -17,5 +18,11 @@ apps = false
 goals = false
 hooks = false
 memories = false
-multi_agent = false
+multi_agent = true
+plugins = false
 shell_tool = false
+
+[agents]
+max_threads = 2
+max_depth = 1
+interrupt_message = false
