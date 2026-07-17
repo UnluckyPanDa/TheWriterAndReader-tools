@@ -14,3 +14,7 @@ chapter context packs.
 
 `scene_contract.schema.json` defines the required scene goals, pressure, state
 changes, and ending turns validated before chapter drafting.
+
+`review_decision.schema.json` defines canonical model-produced fiction review
+decisions. `review_run_record.schema.json` defines the trusted TWR provenance
+envelope for one reviewer run.

@@ -9,6 +9,8 @@ from typing import Any
 from shared.lib.yaml_utils import dump_yaml, load_yaml_text
 
 SECRET_KEYS = {"api_key", "api_key_env", "token", "secret", "password"}
+INTELLIGENCE_LEVELS = ("low", "medium", "high", "very_high")
+CODEX_REASONING_EFFORTS = {"minimal", "low", "medium", "high", "xhigh"}
 
 
 def get_default_config_path() -> Path:
@@ -62,7 +64,32 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     for key in ("providers", "model_profiles", "fallback_chains"):
         if not isinstance(config.get(key), dict):
             messages.append(f"missing or invalid config key: {key}")
-    providers = config.get("providers", {})
+    configured_providers = config.get("providers", {})
+    providers = configured_providers if isinstance(configured_providers, dict) else {}
+    codex_providers = []
+    for name, provider in providers.items():
+        if not isinstance(provider, dict) or provider.get("type") != "codex_cli":
+            continue
+        codex_providers.append(str(name))
+        if not isinstance(provider.get("command"), str) or not str(provider.get("command", "")).strip():
+            messages.append(f"Codex provider {name} requires a non-empty command")
+        if not isinstance(provider.get("profile"), str) or not str(provider.get("profile", "")).strip():
+            messages.append(f"Codex provider {name} requires a dedicated profile")
+        codex_home_value = provider.get("codex_home")
+        if not isinstance(codex_home_value, str) or not codex_home_value.strip():
+            messages.append(f"Codex provider {name} requires a dedicated codex_home")
+        elif not Path(codex_home_value).expanduser().is_absolute():
+            messages.append(f"Codex provider {name} codex_home must be an absolute path")
+        session = provider.get("session")
+        if not isinstance(session, dict):
+            messages.append(f"Codex provider {name} session must be a mapping")
+        else:
+            if session.get("start_mode") != "fresh":
+                messages.append(f"Codex provider {name} only supports session.start_mode fresh")
+            if session.get("retention") not in {"persisted", "ephemeral"}:
+                messages.append(
+                    f"Codex provider {name} session.retention must be persisted or ephemeral"
+                )
     for name, provider in config.get("model_profiles", {}).items():
         if not isinstance(provider, dict):
             messages.append(f"model profile {name} must be a mapping")
@@ -77,6 +104,23 @@ def validate_config(config: dict[str, Any]) -> list[str]:
         for profile in profiles:
             if profile not in config.get("model_profiles", {}):
                 messages.append(f"fallback chain {group} references unknown profile {profile}")
+    if codex_providers:
+        review_policy = config.get("review_policy", {})
+        mappings = review_policy.get("codex_intelligence_map") if isinstance(review_policy, dict) else None
+        if not isinstance(mappings, dict):
+            messages.append("review_policy.codex_intelligence_map must be a mapping")
+        else:
+            for level in INTELLIGENCE_LEVELS:
+                mapping = mappings.get(level)
+                if not isinstance(mapping, dict):
+                    messages.append(f"Codex intelligence mapping is missing: {level}")
+                    continue
+                if not isinstance(mapping.get("model"), str) or not str(mapping.get("model", "")).strip():
+                    messages.append(f"Codex intelligence mapping {level} requires a model")
+                if mapping.get("reasoning_effort") not in CODEX_REASONING_EFFORTS:
+                    messages.append(
+                        f"Codex intelligence mapping {level} has invalid reasoning_effort"
+                    )
     return messages
 
 

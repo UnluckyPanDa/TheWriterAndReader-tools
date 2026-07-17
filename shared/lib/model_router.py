@@ -6,7 +6,12 @@ import json
 import re
 from typing import Any
 
-from shared.lib.config_loader import resolve_model_profile
+from shared.lib.codex_cli_runner import run_codex_cli_model
+from shared.lib.config_loader import (
+    CODEX_REASONING_EFFORTS,
+    INTELLIGENCE_LEVELS,
+    resolve_model_profile,
+)
 from shared.lib.local_cli_runner import run_local_cli_model
 from shared.lib.online_api_runner import run_online_api_model
 
@@ -61,7 +66,47 @@ def select_model_for_reviewer(config: dict[str, Any], reviewer_config: dict[str,
     provider_group = reviewer_config.get("provider_group")
     if not isinstance(provider_group, str):
         provider_group = config.get("review_policy", {}).get("provider_group", "local_first")
-    return get_fallback_chain(config, provider_group)
+    chain = get_fallback_chain(config, provider_group)
+    requested_intelligence = str(reviewer_config.get("intelligence", "medium"))
+    mappings = config.get("review_policy", {}).get("codex_intelligence_map", {})
+    resolved: list[dict[str, Any]] = []
+    for profile in chain:
+        profile_intelligence = profile.get("intelligence")
+        effective_intelligence = (
+            str(profile_intelligence)
+            if profile_intelligence in INTELLIGENCE_LEVELS
+            else requested_intelligence
+        )
+        routed_profile = {
+            **profile,
+            "requested_intelligence": requested_intelligence,
+            "resolved_intelligence": effective_intelligence,
+        }
+        provider_config = profile.get("provider_config", {})
+        if not isinstance(provider_config, dict) or provider_config.get("type") != "codex_cli":
+            resolved.append(routed_profile)
+            continue
+        mapping = mappings.get(requested_intelligence) if isinstance(mappings, dict) else None
+        if not isinstance(mapping, dict):
+            raise ValueError(f"Codex intelligence mapping is missing: {requested_intelligence}")
+        model = mapping.get("model")
+        reasoning_effort = mapping.get("reasoning_effort")
+        if (
+            not isinstance(model, str)
+            or not model.strip()
+            or reasoning_effort not in CODEX_REASONING_EFFORTS
+        ):
+            raise ValueError(f"Codex intelligence mapping is invalid: {requested_intelligence}")
+        resolved.append(
+            {
+                **routed_profile,
+                "model": model,
+                "reasoning_effort": reasoning_effort,
+                "requested_intelligence": requested_intelligence,
+                "resolved_intelligence": requested_intelligence,
+            }
+        )
+    return resolved
 
 
 def select_model_for_story_wizard(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -97,26 +142,57 @@ def attempt_model_chain(
                 result = {"ok": False, "text": "", "reason": "mock_provider_disabled"}
         elif provider_type == "local_cli":
             result = run_local_cli_model(provider_config, model_profile, prompt, options)
+        elif provider_type == "codex_cli":
+            result = run_codex_cli_model(provider_config, model_profile, prompt, options)
         elif provider_type == "online_openai_compatible":
             result = run_online_api_model(provider_config, model_profile, prompt, options)
         else:
             result = {"ok": False, "text": "", "reason": f"unsupported_provider_type: {provider_type}"}
 
-        attempts.append(
-            {
-                "model_profile": profile_name,
-                "provider": provider_name,
-                "status": "success" if result.get("ok") else "failed",
-                "reason": result.get("reason"),
-            }
-        )
+        attempt = {
+            "model_profile": profile_name,
+            "provider": provider_name,
+            "provider_type": provider_type,
+            "status": "success" if result.get("ok") else "failed",
+            "reason": result.get("reason"),
+        }
+        for key in (
+            "model",
+            "reasoning_effort",
+            "codex_profile",
+            "requested_intelligence",
+            "resolved_intelligence",
+            "session",
+            "usage",
+        ):
+            if key in result:
+                attempt[key] = result[key]
+            elif key in model_profile:
+                attempt[key] = model_profile[key]
+        attempts.append(attempt)
         if result.get("ok"):
-            return {
+            success = {
                 "ok": True,
                 "text": str(result.get("text", "")),
                 "model_profile": profile_name,
+                "provider": provider_name,
+                "provider_type": provider_type,
                 "attempts": attempts,
             }
+            for key in (
+                "model",
+                "reasoning_effort",
+                "codex_profile",
+                "requested_intelligence",
+                "resolved_intelligence",
+                "session",
+                "usage",
+            ):
+                if key in result:
+                    success[key] = result[key]
+                elif key in model_profile:
+                    success[key] = model_profile[key]
+            return success
 
     return {"ok": False, "text": "", "model_profile": None, "attempts": attempts}
 
@@ -180,34 +256,37 @@ def _mock_response(prompt: str) -> str:
     if "review report" in lower or "reviewer" in lower or "review pack" in lower:
         reviewer_ids = re.findall(r"^reviewer_id:\s*([^\s]+)$", prompt, re.MULTILINE)
         reviewer_id = reviewer_ids[-1] if reviewer_ids else "mock_reviewer"
-        return f"""# Review Report
-reviewer_id: {reviewer_id}
-reviewer_type: mock
-story_id: story-1
-chapter: 1
-draft_file: mock
-status: pass
-## Summary
-The draft is coherent for the provided context.
-## Evidence
-- Location: opening paragraph
-  Observation: the draft establishes the immediate situation.
-  Reader effect: the scene is readable in this test fixture.
-## Severity Counts
-- blocker: 0
-- major: 0
-- minor: 0
-- note: 0
-## Issues
-## Rewrite Recommendation
-rewrite_required: no
-rewrite_scope: none
-## Gate Recommendation
-gate_status: accept
-## Carry-Forward Tasks
-None.
-## Reviewer Notes
-Mock review completed."""
+        reviewer_types = re.findall(r"^reviewer_type:\s*([^\s]+)$", prompt, re.MULTILINE)
+        reviewer_type = reviewer_types[-1] if reviewer_types else "standard"
+        story_ids = re.findall(r"^story_id:\s*([^\s]+)$", prompt, re.MULTILINE)
+        story_id = story_ids[-1] if story_ids else "story-1"
+        chapters = re.findall(r"^chapter:\s*(\d+)$", prompt, re.MULTILINE)
+        chapter = int(chapters[-1]) if chapters else 1
+        return json.dumps(
+            {
+                "schema_version": 1,
+                "reviewer_id": reviewer_id,
+                "reviewer_type": reviewer_type,
+                "story_id": story_id,
+                "chapter": chapter,
+                "status": "pass",
+                "summary": "The draft is coherent for the provided context.",
+                "evidence": [
+                    {
+                        "location": "opening paragraph",
+                        "observation": "The draft establishes the immediate situation.",
+                        "reader_effect": "The scene is readable in this test fixture.",
+                    }
+                ],
+                "severity_counts": {"blocker": 0, "major": 0, "minor": 0, "note": 0},
+                "issues": [],
+                "rewrite_recommendation": {"required": False, "scope": "none"},
+                "gate_recommendation": "accept",
+                "carry_forward_tasks": [],
+                "reviewer_notes": ["Mock review completed."],
+            },
+            ensure_ascii=False,
+        )
     if "polish this fiction chapter" in lower:
         heading_match = re.search(r"^(# (?:Chapter\s+\d+|第.+章))$", prompt, re.MULTILINE)
         heading = heading_match.group(1) if heading_match else "# Chapter 1"

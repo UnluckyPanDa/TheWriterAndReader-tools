@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 import hashlib
 import json
 import re
@@ -14,8 +15,17 @@ from shared.lib.config_loader import load_config
 from shared.lib.model_router import attempt_model_chain, select_model_for_reviewer
 from shared.lib.path_rules import assert_story_write_allowed
 from shared.lib.review_parser import (
+    REVIEW_DECISION_SCHEMA_PATH,
+    parse_review_decision,
+    parse_review_run_record,
+    render_review_report,
+    review_decision_counts,
+    review_decision_gate,
+    review_decision_rewrite_scope,
+    review_decision_schema,
     report_decision,
     report_rewrite_scope,
+    validate_review_run_record,
     validate_review_report,
 )
 from shared.lib.run_provenance import require_explicit_runtime_config, write_run_provenance
@@ -27,7 +37,6 @@ from tools.review.build_review_pack import build_review_pack
 
 
 REVIEWER_ROOT = Path(__file__).resolve().parent / "standard-reviewers"
-REPORT_TEMPLATE = Path(__file__).resolve().parent / "reviewer-templates" / "review_report_template.md"
 REQUIRED_CORRECTNESS = {"continuity", "reveal_lock"}
 REQUIRED_NOVELNESS = {"editor", "pacing", "tone", "character"}
 
@@ -71,16 +80,13 @@ def _model_chain(config: dict[str, Any], reviewer_config: dict[str, Any]) -> lis
 
 
 def _render_report_template(story_id: str, chapter: int, layer: str, reviewer_id: str) -> str:
-    template = REPORT_TEMPLATE.read_text(encoding="utf-8")
-    replacements = {
-        "{reviewer_id}": reviewer_id,
-        "{reviewer_type}": layer,
-        "{story_id}": story_id,
-        "{chapter}": str(chapter),
-    }
-    for placeholder, value in replacements.items():
-        template = template.replace(placeholder, value)
-    return template
+    return f"""reviewer_id: {reviewer_id}
+reviewer_type: {layer}
+story_id: {story_id}
+chapter: {chapter}
+
+JSON Schema:
+{json.dumps(review_decision_schema(), ensure_ascii=False, indent=2)}"""
 
 
 def _review_prompt(
@@ -107,11 +113,12 @@ def _review_prompt(
 {review_pack}
 
 ## Output Contract
-- Return only the completed Markdown report below.
-- Preserve its metadata values and headings exactly.
-- Every issue must complete every issue field.
-- Remove the example Issue section when there are no issues.
-- A pass still needs specific positive evidence with Location, Observation, and Reader effect.
+- Return only one JSON object matching ReviewDecisionV1 below.
+- Preserve the exact reviewer, story, and chapter identity values.
+- Every issue must complete every schema field.
+- severity_counts must exactly match the issues array.
+- A pass still needs specific positive evidence with location, observation, and reader_effect.
+- Do not wrap the JSON in a Markdown fence and do not add commentary.
 
 {contract}
 """
@@ -121,15 +128,202 @@ def _report_path(story_path: Path, chapter: int, layer: str, reviewer_id: str) -
     return story_path / "reviews" / "chapter" / f"{chapter:03d}" / f"{layer}.{reviewer_id}.md"
 
 
-def _write_review_report(story_path: Path, chapter: int, layer: str, reviewer_id: str, result: dict[str, Any]) -> Path:
-    text = str(result.get("text", "")).strip()
-    errors = validate_review_report(text, reviewer_id)
+def _review_record_path(story_path: Path, chapter: int, layer: str, reviewer_id: str) -> Path:
+    return story_path / "reviews" / "chapter" / f"{chapter:03d}" / f"{layer}.{reviewer_id}.json"
+
+
+def _provider_record(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(result.get("provider") or "unknown"),
+        "type": str(result.get("provider_type") or "unknown"),
+        "model_profile": str(result.get("model_profile") or "unknown"),
+        "codex_profile": result.get("codex_profile") if isinstance(result.get("codex_profile"), str) else None,
+        "model": result.get("model") if isinstance(result.get("model"), str) else None,
+        "reasoning_effort": (
+            result.get("reasoning_effort") if isinstance(result.get("reasoning_effort"), str) else None
+        ),
+        "requested_intelligence": (
+            result.get("requested_intelligence")
+            if isinstance(result.get("requested_intelligence"), str)
+            else None
+        ),
+        "resolved_intelligence": (
+            result.get("resolved_intelligence")
+            if isinstance(result.get("resolved_intelligence"), str)
+            else None
+        ),
+    }
+
+
+def _write_review_report(
+    story_path: Path,
+    chapter: int,
+    layer: str,
+    reviewer_id: str,
+    story_id: str,
+    result: dict[str, Any],
+    run_id: str,
+    draft_sha256: str,
+    promote_current: bool = True,
+) -> tuple[Path, Path, dict[str, Any]]:
+    try:
+        decision = parse_review_decision(str(result.get("text", "")), reviewer_id, layer, story_id, chapter)
+    except ValueError as exc:
+        raise RuntimeError(f"reviewer {reviewer_id} returned an invalid decision: {exc}") from exc
+    report_path = _report_path(story_path, chapter, layer, reviewer_id)
+    record_path = _review_record_path(story_path, chapter, layer, reviewer_id)
+    usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+    record = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "recorded_at": datetime.now(UTC).isoformat(),
+        "draft_sha256": draft_sha256,
+        "reviewer": {"id": reviewer_id, "type": layer},
+        "provider": _provider_record(result),
+        "session": result.get("session") if isinstance(result.get("session"), dict) else None,
+        "usage": {
+            str(key): int(value)
+            for key, value in usage.items()
+            if isinstance(value, int) and value >= 0
+        },
+        "outputs": {
+            "decision_json": str(record_path.relative_to(story_path)),
+            "report_markdown": str(report_path.relative_to(story_path)),
+        },
+        "decision": decision,
+    }
+    errors = validate_review_run_record(record)
     if errors:
-        raise RuntimeError(f"reviewer {reviewer_id} returned an invalid report: {', '.join(errors)}")
-    provenance = "\n\n## Runtime Provenance\n" + f"- Model Profile: {result.get('model_profile')}\n"
-    output_path = _report_path(story_path, chapter, layer, reviewer_id)
-    assert_story_write_allowed(output_path, story_path)
-    return safe_write_file(output_path, text + provenance, story_path)
+        raise RuntimeError(f"reviewer {reviewer_id} produced an invalid run record: {', '.join(errors)}")
+    markdown = render_review_report(decision, record)
+    markdown_errors = validate_review_report(markdown, reviewer_id)
+    if markdown_errors:
+        raise RuntimeError(
+            f"reviewer {reviewer_id} could not be rendered as a compatible report: {', '.join(markdown_errors)}"
+        )
+    history_path = story_path / "runs" / f"chapter_{chapter:03d}" / run_id / f"{layer}.{reviewer_id}.json"
+    assert_story_write_allowed(history_path, story_path)
+    safe_write_file(
+        history_path,
+        json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+        story_path,
+    )
+    if promote_current:
+        _promote_review_record(story_path, report_path, record_path, record)
+    return report_path, record_path, record
+
+
+def _promote_review_record(
+    story_path: Path,
+    report_path: Path,
+    record_path: Path,
+    record: dict[str, Any],
+) -> None:
+    """Promote one validated run record and its canonical Markdown view."""
+    for path, content in (
+        (record_path, json.dumps(record, ensure_ascii=False, indent=2) + "\n"),
+        (report_path, render_review_report(record["decision"], record)),
+    ):
+        assert_story_write_allowed(path, story_path)
+        safe_write_file(path, content, story_path)
+
+
+def _row_from_decision(
+    layer: str,
+    reviewer_id: str,
+    can_block: bool,
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    summary = re.sub(r"\s+", " ", str(decision["summary"])).strip()[:120]
+    return {
+        "label": f"{layer}.{reviewer_id}",
+        "layer": layer,
+        "reviewer_id": reviewer_id,
+        "can_block": can_block,
+        "decision": review_decision_gate(decision, can_block),
+        "counts": review_decision_counts(decision),
+        "rewrite_scope": review_decision_rewrite_scope(decision),
+        "summary": summary or "No summary provided.",
+    }
+
+
+def _load_current_record(
+    story_path: Path,
+    story_id: str,
+    chapter: int,
+    layer: str,
+    reviewer_id: str,
+) -> dict[str, Any] | None:
+    path = _review_record_path(story_path, chapter, layer, reviewer_id)
+    if not path.exists():
+        return None
+    try:
+        record = parse_review_run_record(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+    decision = record["decision"]
+    if (
+        record["reviewer"] != {"id": reviewer_id, "type": layer}
+        or decision["story_id"] != story_id
+        or decision["chapter"] != chapter
+        or record["draft_sha256"] != _draft_hash(story_path, chapter)
+    ):
+        return None
+    return record
+
+
+def _legacy_review_row(
+    story_path: Path,
+    chapter: int,
+    layer: str,
+    reviewer_id: str,
+    can_block: bool,
+) -> tuple[Path, dict[str, Any]] | None:
+    """Load a compatible Markdown-only report when no canonical JSON exists."""
+    path = _report_path(story_path, chapter, layer, reviewer_id)
+    if not path.exists():
+        return None
+    text = path.read_text(encoding="utf-8")
+    if validate_review_report(text, reviewer_id):
+        return None
+    decision, counts = report_decision(text, can_block)
+    summary = re.sub(
+        r"\s+",
+        " ",
+        text.split("## Evidence", 1)[0].split("## Summary", 1)[-1],
+    ).strip()[:120]
+    return path, {
+        "label": f"{layer}.{reviewer_id}",
+        "layer": layer,
+        "reviewer_id": reviewer_id,
+        "can_block": can_block,
+        "decision": decision,
+        "counts": counts,
+        "rewrite_scope": report_rewrite_scope(text),
+        "summary": summary or "No summary provided.",
+    }
+
+
+def _current_review_row(
+    story_path: Path,
+    story_id: str,
+    chapter: int,
+    layer: str,
+    reviewer_id: str,
+    can_block: bool,
+) -> tuple[Path, dict[str, Any]] | None:
+    """Load canonical JSON first and fail closed when an existing record is invalid."""
+    record_path = _review_record_path(story_path, chapter, layer, reviewer_id)
+    record = _load_current_record(story_path, story_id, chapter, layer, reviewer_id)
+    if record is not None:
+        report_path = _report_path(story_path, chapter, layer, reviewer_id)
+        markdown = render_review_report(record["decision"], record)
+        assert_story_write_allowed(report_path, story_path)
+        safe_write_file(report_path, markdown, story_path)
+        return report_path, _row_from_decision(layer, reviewer_id, can_block, record["decision"])
+    if record_path.exists():
+        return None
+    return _legacy_review_row(story_path, chapter, layer, reviewer_id, can_block)
 
 
 def _combined_gate_status(decisions: list[str]) -> str:
@@ -264,29 +458,18 @@ semantic_repetition_count: {(diagnostics or {}).get('metrics', {}).get('semantic
 def run_novelness_gate(workspace_path: str | Path, story_id: str, chapter: int) -> Path:
     """Rebuild the Novelness Gate from current reports and diagnostics."""
     story_path = resolve_story_path(workspace_path, story_id)
-    review_root = story_path / "reviews" / "chapter" / f"{chapter:03d}"
     rows: list[dict[str, Any]] = []
     for reviewer_id in sorted(REQUIRED_NOVELNESS):
-        path = review_root / f"standard.{reviewer_id}.md"
-        if not path.exists():
-            continue
-        text = path.read_text(encoding="utf-8")
-        errors = validate_review_report(text, reviewer_id)
-        if errors:
-            continue
-        decision, counts = report_decision(text, True)
-        rows.append(
-            {
-                "label": f"standard.{reviewer_id}",
-                "layer": "standard",
-                "reviewer_id": reviewer_id,
-                "can_block": True,
-                "decision": decision,
-                "counts": counts,
-                "rewrite_scope": report_rewrite_scope(text),
-                "summary": "Current evidence-bearing report.",
-            }
+        current = _current_review_row(
+            story_path,
+            story_id,
+            chapter,
+            "standard",
+            reviewer_id,
+            True,
         )
+        if current is not None:
+            rows.append(current[1])
     diagnostics_path = story_path / "context" / f"chapter_{chapter:03d}_writing_diagnostics.json"
     diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8")) if diagnostics_path.exists() else {}
     status, missing = _novelness_status(rows, diagnostics)
@@ -305,28 +488,19 @@ def rebuild_review_gate(workspace_path: str | Path, story_id: str, chapter: int)
         ("special", "special_reviewers"),
     ):
         for reviewer_id, settings in _enabled_reviewers(reviewer_config, key):
-            path = _report_path(story_path, chapter, layer, reviewer_id)
-            if not path.exists():
-                continue
-            text = path.read_text(encoding="utf-8")
-            if validate_review_report(text, reviewer_id):
-                continue
             can_block = bool(settings.get("can_block_gate", True))
-            decision, counts = report_decision(text, can_block)
-            summary = re.sub(r"\s+", " ", text.split("## Evidence", 1)[0].split("## Summary", 1)[-1]).strip()[:120]
-            reports.append(path)
-            rows.append(
-                {
-                    "label": f"{layer}.{reviewer_id}",
-                    "layer": layer,
-                    "reviewer_id": reviewer_id,
-                    "can_block": can_block,
-                    "decision": decision,
-                    "counts": counts,
-                    "rewrite_scope": report_rewrite_scope(text),
-                    "summary": summary or "No summary provided.",
-                }
+            current = _current_review_row(
+                story_path,
+                story_id,
+                chapter,
+                layer,
+                reviewer_id,
+                can_block,
             )
+            if current is not None:
+                path, row = current
+                reports.append(path)
+                rows.append(row)
     if not reports:
         raise RuntimeError("no valid current reviewer reports found")
     combined_path = _combine_reviews(story_path, chapter, reports)
@@ -484,34 +658,46 @@ def run_review(
             raise RuntimeError("no enabled reviewers found")
 
         reports: list[Path] = []
+        record_paths: list[Path] = []
         rows: list[dict[str, Any]] = []
         attempts: list[dict[str, Any]] = []
+        pending_records: list[tuple[Path, Path, dict[str, Any]]] = []
+        codex_thread_ids: set[str] = set()
+        router_options = {**(options or {}), "output_schema_path": str(REVIEW_DECISION_SCHEMA_PATH)}
         for layer, reviewer_id, settings in review_specs:
             profile = _reviewer_profile(story_path, layer, reviewer_id, settings)
             prompt = _review_prompt(story_id, chapter, layer, reviewer_id, settings, profile, review_pack)
-            result = attempt_model_chain(prompt, _model_chain(config, settings), config, options)
+            result = attempt_model_chain(prompt, _model_chain(config, settings), config, router_options)
             if not result.get("ok"):
                 raise RuntimeError(f"reviewer {reviewer_id} failed for all configured models: {result.get('attempts', [])}")
-            report_path = _write_review_report(story_path, chapter, layer, reviewer_id, result)
-            text = report_path.read_text(encoding="utf-8")
-            can_block = bool(settings.get("can_block_gate", True))
-            decision, counts = report_decision(text, can_block)
-            summary = re.sub(r"\s+", " ", text.split("## Evidence", 1)[0].split("## Summary", 1)[-1]).strip()[:120]
-            reports.append(report_path)
-            rows.append(
-                {
-                    "label": f"{layer}.{reviewer_id}",
-                    "layer": layer,
-                    "reviewer_id": reviewer_id,
-                    "can_block": can_block,
-                    "decision": decision,
-                    "counts": counts,
-                    "rewrite_scope": report_rewrite_scope(text),
-                    "summary": summary or "No summary provided.",
-                }
+            if result.get("provider_type") == "codex_cli":
+                session = result.get("session")
+                thread_id = session.get("thread_id") if isinstance(session, dict) else None
+                if not isinstance(thread_id, str) or not thread_id.strip():
+                    raise RuntimeError(f"reviewer {reviewer_id} did not return a fresh Codex thread")
+                if thread_id in codex_thread_ids:
+                    raise RuntimeError(f"reviewer {reviewer_id} reused Codex thread {thread_id}")
+                codex_thread_ids.add(thread_id)
+            report_path, record_path, record = _write_review_report(
+                story_path,
+                chapter,
+                layer,
+                reviewer_id,
+                story_id,
+                result,
+                run_id,
+                draft_sha256,
+                promote_current=False,
             )
+            can_block = bool(settings.get("can_block_gate", True))
+            reports.append(report_path)
+            record_paths.append(record_path)
+            pending_records.append((report_path, record_path, record))
+            rows.append(_row_from_decision(layer, reviewer_id, can_block, record["decision"]))
             attempts.extend(result.get("attempts", []))
 
+        for report_path, record_path, record in pending_records:
+            _promote_review_record(story_path, report_path, record_path, record)
         combined_path = _combine_reviews(story_path, chapter, reports)
         diagnostics_path = story_path / "context" / f"chapter_{chapter:03d}_writing_diagnostics.json"
         diagnostics = (
@@ -539,8 +725,13 @@ def run_review(
                 "review_gate": str(gate_path.relative_to(story_path)),
                 "novelness_gate": str(novelness_path.relative_to(story_path)),
                 "review_task_summary": str(task_path.relative_to(story_path)),
+                "review_records": [str(path.relative_to(story_path)) for path in record_paths],
             },
-            {"run_id": run_id, "draft_sha256": draft_sha256},
+            {
+                "run_id": run_id,
+                "draft_sha256": draft_sha256,
+                "codex_thread_ids": sorted(codex_thread_ids),
+            },
         )
         return {
             "review_pack": review_pack_path,

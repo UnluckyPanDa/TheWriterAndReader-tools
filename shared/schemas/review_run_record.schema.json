@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thewriterandreader.local/schemas/review_run_record.schema.json",
+  "title": "ReviewRunRecordV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "recorded_at",
+    "draft_sha256",
+    "reviewer",
+    "provider",
+    "session",
+    "usage",
+    "outputs",
+    "decision"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "draft_sha256": {
+      "oneOf": [
+        {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        {"const": "missing"}
+      ]
+    },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "type": {"enum": ["standard", "series", "special"]}
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "model_profile",
+        "codex_profile",
+        "model",
+        "reasoning_effort",
+        "requested_intelligence",
+        "resolved_intelligence"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "type": {"type": "string", "minLength": 1},
+        "model_profile": {"type": "string", "minLength": 1},
+        "codex_profile": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]},
+        "reasoning_effort": {"type": ["string", "null"]},
+        "requested_intelligence": {"type": ["string", "null"]},
+        "resolved_intelligence": {"type": ["string", "null"]}
+      }
+    },
+    "session": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["start_mode", "retention", "thread_id", "resumed_from"],
+          "properties": {
+            "start_mode": {"enum": ["fresh", "resumed"]},
+            "retention": {"enum": ["persisted", "ephemeral"]},
+            "thread_id": {"type": ["string", "null"]},
+            "resumed_from": {"type": ["string", "null"]}
+          }
+        }
+      ]
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision_json", "report_markdown"],
+      "properties": {
+        "decision_json": {"type": "string", "minLength": 1},
+        "report_markdown": {"type": "string", "minLength": 1}
+      }
+    },
+    "decision": {"$ref": "review_decision.schema.json"}
+  }
+}

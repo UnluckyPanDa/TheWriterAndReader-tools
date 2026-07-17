@@ -11,7 +11,7 @@ from shared.lib.review_parser import recommended_gate_status, validate_review_re
 from shared.lib.scene_contract import parse_scene_contract
 from shared.lib.scene_skeleton import parse_scene_skeleton
 from tools.review.build_review_pack import build_review_pack
-from tools.review.run_review import _novelness_status, run_novelness_gate, run_review
+from tools.review.run_review import _novelness_status, rebuild_review_gate, run_novelness_gate, run_review
 from tools.publish.build_publish_pack import build_publish_pack
 from tools.writing.build_write_pack import build_write_pack
 from tools.writing.generate_draft import build_generation_prompt, build_polish_prompt, generate_draft
@@ -283,6 +283,11 @@ special_reviewers:
             outputs = run_review(str(workspace), "story-1", 1, str(config))
 
             self.assertTrue((story / "reviews" / "chapter" / "001" / "standard.continuity.md").exists())
+            record_path = story / "reviews" / "chapter" / "001" / "standard.continuity.json"
+            self.assertTrue(record_path.exists())
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            self.assertEqual(record["decision"]["reviewer_id"], "continuity")
+            self.assertEqual(len(record["draft_sha256"]), 64)
             self.assertTrue((story / "reviews" / "chapter" / "001" / "series.timeline.md").exists())
             self.assertTrue((story / "reviews" / "chapter" / "001" / "special.director.md").exists())
             self.assertTrue((story / "runs" / "chapter_001_review.json").exists())
@@ -304,6 +309,37 @@ special_reviewers:
             self.assertIn("status: accept", outputs["novelness_gate"].read_text(encoding="utf-8"))
             rebuilt = run_novelness_gate(workspace, "story-1", 1)
             self.assertIn("status: accept", rebuilt.read_text(encoding="utf-8"))
+
+    def test_canonical_json_controls_gate_and_regenerates_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            config = FIXTURES / "mock_config.yaml"
+            story = workspace / "fixture_stories" / "story-1"
+            run_review(str(workspace), "story-1", 1, str(config))
+            editor_report = story / "reviews" / "chapter" / "001" / "standard.editor.md"
+            editor_report.write_text("manually changed markdown\n", encoding="utf-8")
+
+            outputs = rebuild_review_gate(workspace, "story-1", 1)
+
+            self.assertIn("status: accepted", outputs["review_gate"].read_text(encoding="utf-8"))
+            regenerated = editor_report.read_text(encoding="utf-8")
+            self.assertIn("reviewer_id: editor", regenerated)
+            self.assertIn("status: pass", regenerated)
+
+    def test_invalid_canonical_json_does_not_fall_back_to_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            config = FIXTURES / "mock_config.yaml"
+            story = workspace / "fixture_stories" / "story-1"
+            run_review(str(workspace), "story-1", 1, str(config))
+            record_path = story / "reviews" / "chapter" / "001" / "standard.editor.json"
+            record_path.write_text("{}\n", encoding="utf-8")
+
+            rebuilt = run_novelness_gate(workspace, "story-1", 1)
+
+            text = rebuilt.read_text(encoding="utf-8")
+            self.assertIn("status: incomplete", text)
+            self.assertIn("missing_reviewers: editor", text)
 
     def test_novelness_gate_maps_a_major_scene_issue_to_scene_rewrite(self) -> None:
         rows = []
@@ -359,6 +395,33 @@ special_reviewers:
             gate_text = gate.read_text(encoding="utf-8")
             self.assertIn("run_state: failed", gate_text)
             self.assertIn("status: blocked", gate_text)
+
+    def test_partial_failed_rerun_does_not_promote_mixed_current_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            config = FIXTURES / "mock_config.yaml"
+            story = workspace / "fixture_stories" / "story-1"
+            run_review(str(workspace), "story-1", 1, str(config))
+            review_root = story / "reviews" / "chapter" / "001"
+            before = {path.name: path.read_text(encoding="utf-8") for path in review_root.glob("*.json")}
+
+            from shared.lib.model_router import attempt_model_chain as real_attempt_model_chain
+
+            call_count = 0
+
+            def partial_failure(*args: object, **kwargs: object) -> dict[str, object]:
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    return real_attempt_model_chain(*args, **kwargs)
+                return {"ok": False, "attempts": []}
+
+            with patch("tools.review.run_review.attempt_model_chain", side_effect=partial_failure):
+                with self.assertRaisesRegex(RuntimeError, "failed for all configured models"):
+                    run_review(str(workspace), "story-1", 1, str(config))
+
+            after = {path.name: path.read_text(encoding="utf-8") for path in review_root.glob("*.json")}
+            self.assertEqual(after, before)
 
     def test_publish_pack_rejects_a_gate_for_an_older_draft_hash(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

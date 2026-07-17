@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thewriterandreader.local/schemas/review_decision.schema.json",
+  "title": "ReviewDecisionV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "reviewer_id",
+    "reviewer_type",
+    "story_id",
+    "chapter",
+    "status",
+    "summary",
+    "evidence",
+    "severity_counts",
+    "issues",
+    "rewrite_recommendation",
+    "gate_recommendation",
+    "carry_forward_tasks",
+    "reviewer_notes"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "reviewer_id": {"type": "string", "minLength": 1},
+    "reviewer_type": {"enum": ["standard", "series", "special"]},
+    "story_id": {"type": "string", "minLength": 1},
+    "chapter": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["pass", "pass_with_minor_issues", "needs_revision", "blocked"]},
+    "summary": {"type": "string", "minLength": 1},
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["location", "observation", "reader_effect"],
+        "properties": {
+          "location": {"type": "string", "minLength": 1},
+          "observation": {"type": "string", "minLength": 1},
+          "reader_effect": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "severity_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocker", "major", "minor", "note"],
+      "properties": {
+        "blocker": {"type": "integer", "minimum": 0},
+        "major": {"type": "integer", "minimum": 0},
+        "minor": {"type": "integer", "minimum": 0},
+        "note": {"type": "integer", "minimum": 0}
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "issue_id",
+          "issue_type",
+          "severity",
+          "location",
+          "observation",
+          "reader_effect",
+          "review_scope",
+          "rewrite_required",
+          "rewrite_scope",
+          "suggested_fix"
+        ],
+        "properties": {
+          "issue_id": {"type": "string", "pattern": "^R[0-9]{3,}$"},
+          "issue_type": {
+            "enum": [
+              "continuity",
+              "reveal_timing",
+              "character_consistency",
+              "relationship_addressing",
+              "language_clarity",
+              "tone",
+              "viewpoint",
+              "repetition",
+              "summary_instead_of_scene",
+              "exposition_overload",
+              "emotional_overexplanation",
+              "weak_dialogue",
+              "rhythm_monotony",
+              "source_wording_reuse",
+              "planning_language_leak",
+              "pacing_local",
+              "pacing_scene",
+              "pacing_chapter",
+              "weak_transition",
+              "weak_hook",
+              "other"
+            ]
+          },
+          "severity": {"enum": ["blocker", "major", "minor", "note"]},
+          "location": {"type": "string", "minLength": 1},
+          "observation": {"type": "string", "minLength": 1},
+          "reader_effect": {"type": "string", "minLength": 1},
+          "review_scope": {"enum": ["local", "scene", "chapter"]},
+          "rewrite_required": {"type": "boolean"},
+          "rewrite_scope": {"enum": ["none", "sentence", "paragraph", "scene", "chapter"]},
+          "suggested_fix": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "rewrite_recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "scope"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "scope": {"enum": ["none", "sentence", "paragraph", "scene", "chapter"]}
+      }
+    },
+    "gate_recommendation": {"enum": ["accept", "revise", "block"]},
+    "carry_forward_tasks": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "reviewer_notes": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    }
+  }
+}

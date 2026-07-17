@@ -17,6 +17,16 @@ providers:
     enabled: false
     base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
+  codex:
+    type: codex_cli
+    enabled: false
+    command: codex
+    profile: twr-reviewer
+    codex_home: ~/.codex/twr-reviewer
+    timeout_seconds: 900
+    session:
+      start_mode: fresh
+      retention: persisted
 model_profiles:
   mock_writer:
     provider: mock
@@ -33,6 +43,9 @@ model_profiles:
     model: gpt-5.5
     intelligence: very_high
     context_window: 128000
+  codex_reviewer:
+    provider: codex
+    context_window: 128000
 fallback_chains:
   mock_first:
     - mock_writer
@@ -46,6 +59,8 @@ fallback_chains:
     - online_writer
   online_only_high_accuracy:
     - online_writer
+  codex_review:
+    - codex_reviewer
 writing_stages:
   scene_planning:
     intelligence: high
@@ -88,9 +103,22 @@ writing_stages:
     creativity: low
     provider_group: local_first
 review_policy:
+  codex_intelligence_map:
+    low:
+      model: gpt-5.5
+      reasoning_effort: low
+    medium:
+      model: gpt-5.5
+      reasoning_effort: medium
+    high:
+      model: gpt-5.5
+      reasoning_effort: high
+    very_high:
+      model: gpt-5.5
+      reasoning_effort: xhigh
   rereview_after_writer_explanation:
     minimum_intelligence: very_high
-    provider_group: online_only_high_accuracy
+    provider_group: codex_review
 story_tools:
   provider_group: online_only_high_accuracy
   allow_local: false

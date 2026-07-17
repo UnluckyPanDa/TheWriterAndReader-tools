@@ -20,7 +20,24 @@ Real config belongs outside this repository at:
 ~/.config/the-writer-and-reader/config.yaml
 ```
 
-Use `config.example.yaml` as the import/export shape. Online providers are disabled in the example until the user explicitly enables them.
+Use `config.example.yaml` as the import/export shape. Online API and Codex CLI
+providers are disabled in the example until the user explicitly enables them.
+
+The optional Codex review route requires its dedicated read-only profile:
+
+```text
+mkdir -p ~/.codex/twr-reviewer
+cp shared/templates/codex/twr-reviewer.config.toml ~/.codex/twr-reviewer/
+CODEX_HOME=~/.codex/twr-reviewer codex login
+twr doctor --config ~/.config/the-writer-and-reader/config.yaml
+```
+
+Enable the `codex` provider and select `codex_review` only after that check
+passes. The configured `codex_home` must be that isolated directory and must not
+contain `AGENTS.md` or `AGENTS.override.md`. Each reviewer starts a fresh Codex session. Set `session.retention` to
+`persisted` to retain the thread record or `ephemeral` to discard it after the
+run. `review_policy.codex_intelligence_map` resolves each reviewer intelligence
+level to an explicit Codex model and reasoning effort.
 
 ## Wizard Scaffolds
 
