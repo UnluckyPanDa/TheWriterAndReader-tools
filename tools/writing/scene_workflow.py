@@ -124,7 +124,7 @@ def draft_scene(
         ),
         select_model_for_stage(config, "chapter_generation"),
         config,
-        options,
+        {**(options or {}), "progress_label": f"scene draft {scene_id}"},
     )
     if not result.get("ok"):
         raise RuntimeError(f"scene draft failed for all configured models: {result.get('attempts', [])}")

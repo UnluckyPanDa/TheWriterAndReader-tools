@@ -189,7 +189,7 @@ def revise_draft(
     candidate_scores: list[float] = []
     successful_attempts = 0
     all_attempts: list[dict[str, Any]] = []
-    for _ in range(attempts_requested):
+    for attempt_index in range(attempts_requested):
         variation_seed = random.SystemRandom().randrange(1, 2**31)
         variation_factor = round(random.SystemRandom().uniform(0.15, 1.0), 3)
         prompt = build_revision_prompt(
@@ -209,7 +209,12 @@ def revise_draft(
             prompt,
             chain,
             config,
-            {**runtime_options, "temperature": base_temperature + variation_factor * 0.2, "variation_seed": variation_seed},
+            {
+                **runtime_options,
+                "temperature": base_temperature + variation_factor * 0.2,
+                "variation_seed": variation_seed,
+                "progress_label": f"chapter revision candidate {attempt_index + 1}",
+            },
         )
         all_attempts.extend(result.get("attempts", []))
         if not result.get("ok"):
@@ -310,7 +315,7 @@ def revise_scene(
         ),
         select_model_for_stage(config, "chapter_revision", fallback_stage="chapter_generation"),
         config,
-        options,
+        {**(options or {}), "progress_label": f"scene revision {scene_id}"},
     )
     if not result.get("ok"):
         raise RuntimeError(f"scene revision failed for all configured models: {result.get('attempts', [])}")

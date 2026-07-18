@@ -403,6 +403,7 @@ def generate_scene_contract(
         **(options or {}),
         "output_schema_path": str(SCENE_CONTRACT_SCHEMA_PATH),
         "structured_output": True,
+        "progress_label": "scene contract",
     }
     result = attempt_structured_model_chain(
         build_scene_contract_prompt(story_id, chapter, write_pack),
@@ -430,6 +431,7 @@ def generate_scene_skeleton(
         **(options or {}),
         "output_schema_path": str(SCENE_SKELETON_SCHEMA_PATH),
         "structured_output": True,
+        "progress_label": "scene skeleton",
     }
     result = attempt_structured_model_chain(
         build_scene_skeleton_prompt(story_id, chapter, scene_contract),
@@ -493,7 +495,7 @@ def generate_draft(
             ),
             chain,
             config,
-            options,
+            {**(options or {}), "progress_label": f"scene draft {scene_id}"},
         )
         if not result.get("ok"):
             raise RuntimeError(
@@ -512,7 +514,7 @@ def generate_draft(
         build_deepening_prompt(story_id, chapter, language, heading, scene_contract, first_draft),
         deepening_chain,
         config,
-        options,
+        {**(options or {}), "progress_label": "narrative deepening"},
     )
     if not deepening_result.get("ok"):
         raise RuntimeError(
@@ -524,7 +526,7 @@ def generate_draft(
         build_compression_prompt(story_id, chapter, language, heading, scene_contract, deepened_draft),
         compression_chain,
         config,
-        options,
+        {**(options or {}), "progress_label": "compression and de-duplication"},
     )
     if not compression_result.get("ok"):
         raise RuntimeError(
@@ -544,7 +546,7 @@ def generate_draft(
         ),
         polish_chain,
         config,
-        options,
+        {**(options or {}), "progress_label": "prose polish"},
     )
     if not polish_result.get("ok"):
         attempts = polish_result.get("attempts", [])

@@ -158,12 +158,30 @@ def attempt_model_chain(
     attempts: list[dict[str, Any]] = []
 
     for model_profile in model_chain:
+        profile_name = str(model_profile.get("profile_name", model_profile.get("model", "unknown")))
+        _notify_progress(options, f"{_progress_label(options)}: trying {profile_name}")
         result, attempt = _attempt_model_profile(prompt, model_profile, config, options)
         attempts.append(attempt)
         if result.get("ok"):
+            _notify_progress(options, f"{_progress_label(options)}: {profile_name} completed")
             return _success_result(result, model_profile, attempts)
+        _notify_progress(
+            options,
+            f"{_progress_label(options)}: {profile_name} failed ({result.get('reason') or 'unknown error'})",
+        )
 
     return {"ok": False, "text": "", "model_profile": None, "attempts": attempts}
+
+
+def _progress_label(options: dict[str, Any]) -> str:
+    label = options.get("progress_label", "model generation")
+    return str(label).strip() or "model generation"
+
+
+def _notify_progress(options: dict[str, Any], message: str) -> None:
+    callback = options.get("progress_callback")
+    if callable(callback):
+        callback(message)
 
 
 def _attempt_model_profile(
@@ -260,6 +278,9 @@ def attempt_structured_model_chain(
     router_options = {**(options or {}), "structured_output": True}
     attempts: list[dict[str, Any]] = []
     for model_profile in model_chain:
+        profile_name = str(model_profile.get("profile_name", model_profile.get("model", "unknown")))
+        label = _progress_label(router_options)
+        _notify_progress(router_options, f"{label}: trying {profile_name}")
         initial_result, initial_attempt = _attempt_model_profile(
             prompt,
             model_profile,
@@ -269,6 +290,10 @@ def attempt_structured_model_chain(
         initial_attempt["phase"] = "initial"
         if not initial_result.get("ok"):
             attempts.append(initial_attempt)
+            _notify_progress(
+                router_options,
+                f"{label}: {profile_name} failed ({initial_result.get('reason') or 'unknown error'})",
+            )
             continue
         initial_text = str(initial_result.get("text", ""))
         try:
@@ -276,8 +301,10 @@ def attempt_structured_model_chain(
         except (TypeError, ValueError) as exc:
             initial_attempt.update(status="invalid", reason="validation_failed", validation_error=str(exc))
             attempts.append(initial_attempt)
+            _notify_progress(router_options, f"{label}: {profile_name} returned invalid output; repairing")
         else:
             attempts.append(initial_attempt)
+            _notify_progress(router_options, f"{label}: {profile_name} completed")
             return _success_result(initial_result, model_profile, attempts, value)
 
         repaired_result, repaired_attempt = _attempt_model_profile(
@@ -289,6 +316,10 @@ def attempt_structured_model_chain(
         repaired_attempt["phase"] = "repair"
         if not repaired_result.get("ok"):
             attempts.append(repaired_attempt)
+            _notify_progress(
+                router_options,
+                f"{label}: {profile_name} repair failed ({repaired_result.get('reason') or 'unknown error'})",
+            )
             continue
         repaired_text = str(repaired_result.get("text", ""))
         try:
@@ -296,8 +327,10 @@ def attempt_structured_model_chain(
         except (TypeError, ValueError) as exc:
             repaired_attempt.update(status="invalid", reason="validation_failed", validation_error=str(exc))
             attempts.append(repaired_attempt)
+            _notify_progress(router_options, f"{label}: {profile_name} repair remained invalid")
             continue
         attempts.append(repaired_attempt)
+        _notify_progress(router_options, f"{label}: {profile_name} repair completed")
         return _success_result(repaired_result, model_profile, attempts, value)
     return {"ok": False, "text": "", "model_profile": None, "attempts": attempts}
 
