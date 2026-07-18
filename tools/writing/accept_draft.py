@@ -3,15 +3,27 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import re
 from typing import Any
 from uuid import uuid4
 
+from shared.lib.acceptance_contract import (
+    ACCEPTANCE_GROUNDING_SCHEMA_PATH,
+    ACCEPTED_CONTINUITY_SCHEMA_PATH,
+    parse_acceptance_grounding,
+    parse_accepted_continuity,
+    render_accepted_continuity,
+)
 from shared.lib.config_loader import load_config
-from shared.lib.model_router import attempt_model_chain, select_model_for_stage
+from shared.lib.model_router import attempt_structured_model_chain, select_model_for_stage
 from shared.lib.path_rules import assert_story_write_allowed
-from shared.lib.run_provenance import require_explicit_runtime_config, write_run_provenance
+from shared.lib.run_provenance import (
+    build_run_provenance_payload,
+    require_explicit_runtime_config,
+    write_prepared_run_provenance,
+)
 from shared.lib.safe_write import safe_write_file
 from shared.lib.workspace_loader import resolve_story_path
 from shared.lib.yaml_utils import dump_yaml, load_yaml_text
@@ -37,8 +49,8 @@ def _validate_gate(story_path: Path, chapter: int, draft: str) -> Path:
     return gate_path
 
 
-def _summary_prompt(story_id: str, chapter: int, accepted_chapter: str) -> str:
-    return f"""Summarize the accepted chapter for future writing continuity.
+def _continuity_prompt(story_id: str, chapter: int, accepted_chapter: str) -> str:
+    return f"""Create AcceptedContinuityV1 JSON from an accepted fiction chapter.
 
 story_id: {story_id}
 chapter: {chapter}
@@ -46,17 +58,36 @@ chapter: {chapter}
 ## Accepted Chapter
 {accepted_chapter}
 
-## Summary Contract
+## Contract
 - Derive every statement from the accepted chapter above.
 - Record concrete events, decisions, discoveries, relationship changes, practical state, and unresolved pressure.
-- Do not use the chapter plan, an earlier draft, reviewer speculation, or hidden canon.
+- Record the ending situation, intentions, relationship state, open pressure, reader questions, and continuity details needed next.
 - Do not invent or interpret beyond the accepted text.
-- Return only concise Markdown beginning with `# Chapter {chapter:03d} Accepted Summary`.
+- Use empty arrays when the accepted chapter provides no evidence for a field.
+- Return only one JSON object matching AcceptedContinuityV1.
 """
 
 
-def _handover_prompt(story_id: str, chapter: int, accepted_chapter: str, summary: str) -> str:
-    return f"""Create the writing handover after an accepted fiction chapter.
+def _structured_repair_prompt(label: str, invalid_text: str, error: str) -> str:
+    return f"""Repair invalid {label} JSON.
+
+Validation error:
+{error}
+
+Invalid response:
+{invalid_text}
+
+Return only one corrected JSON object.
+"""
+
+
+def _grounding_prompt(
+    story_id: str,
+    chapter: int,
+    accepted_chapter: str,
+    continuity: dict[str, Any],
+) -> str:
+    return f"""Evaluate AcceptedContinuityV1 against its only allowed source.
 
 story_id: {story_id}
 chapter: {chapter}
@@ -64,14 +95,41 @@ chapter: {chapter}
 ## Accepted Chapter
 {accepted_chapter}
 
-## Accepted Chapter Summary
-{summary}
+## Candidate AcceptedContinuityV1
+{json.dumps(continuity, ensure_ascii=False, indent=2)}
 
-## Handover Contract
-- Derive current state from the accepted chapter, supported by the accepted summary.
-- Record the ending situation, character intentions, relationship state, open pressure, reader questions, and continuity details needed next.
-- Keep reviewer terminology, planned-but-unwritten events, hidden canon, and revision advice out of the handover.
-- Return only concise Markdown beginning with `# Story Handover`.
+## Grounding Contract
+- Mark every unsupported or over-interpreted claim.
+- Mark every character or place name that conflicts with the accepted chapter.
+- Detect `Thinking...`, `<think>`, chain-of-thought, or model-process traces anywhere in the candidate.
+- grounded must be true only when all finding arrays are empty and thinking_trace_detected is false.
+- Return only one JSON object matching AcceptanceGroundingDecisionV1.
+"""
+
+
+def _semantic_repair_prompt(
+    story_id: str,
+    chapter: int,
+    accepted_chapter: str,
+    continuity: dict[str, Any],
+    grounding: dict[str, Any],
+) -> str:
+    return f"""Repair AcceptedContinuityV1 using the accepted chapter as the only source.
+
+story_id: {story_id}
+chapter: {chapter}
+
+## Accepted Chapter
+{accepted_chapter}
+
+## Invalid Candidate
+{json.dumps(continuity, ensure_ascii=False, indent=2)}
+
+## Grounding Findings
+{json.dumps(grounding, ensure_ascii=False, indent=2)}
+
+Remove unsupported claims, correct name conflicts, and remove all model-process traces.
+Return only one corrected JSON object matching AcceptedContinuityV1.
 """
 
 
@@ -82,7 +140,7 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _update_state(story_path: Path, chapter: int) -> tuple[Path, Path]:
+def _prepare_state(story_path: Path, chapter: int) -> tuple[Path, str, Path, str]:
     chapter_path = story_path / "state" / "chapter_status.yaml"
     chapter_state = _load_yaml_mapping(chapter_path)
     chapter_state["current_chapter"] = chapter
@@ -91,17 +149,20 @@ def _update_state(story_path: Path, chapter: int) -> tuple[Path, Path]:
         chapters = {}
     chapters[str(chapter)] = {"status": "accepted", "source": f"chapters/chapter_{chapter:03d}.md"}
     chapter_state["chapters"] = chapters
-    assert_story_write_allowed(chapter_path, story_path)
-    safe_write_file(chapter_path, dump_yaml(chapter_state, sort_keys=False), story_path)
+    chapter_content = dump_yaml(chapter_state, sort_keys=False)
 
     story_state_path = story_path / "state" / "story_status.yaml"
     story_state = _load_yaml_mapping(story_state_path)
     story_state["phase"] = "writing"
     story_state["active_chapter"] = chapter + 1
     story_state["last_accepted_chapter"] = chapter
-    assert_story_write_allowed(story_state_path, story_path)
-    safe_write_file(story_state_path, dump_yaml(story_state, sort_keys=False), story_path)
-    return chapter_path, story_state_path
+    story_content = dump_yaml(story_state, sort_keys=False)
+    return chapter_path, chapter_content, story_state_path, story_content
+
+
+def _contains_thinking_trace(value: Any) -> bool:
+    text = json.dumps(value, ensure_ascii=False).lower()
+    return any(marker in text for marker in ("thinking...", "<think>", "</think>", "chain-of-thought"))
 
 
 def accept_draft(
@@ -121,45 +182,92 @@ def accept_draft(
     config = load_config(config_path)
     require_explicit_runtime_config(config, "accepted chapter summary and handover")
     chain = select_model_for_stage(config, "handover_update", fallback_stage="chapter_generation")
-    summary_result = attempt_model_chain(_summary_prompt(story_id, chapter, draft), chain, config, options)
-    if not summary_result.get("ok"):
-        raise RuntimeError(f"accepted summary failed for all configured models: {summary_result.get('attempts', [])}")
-    summary = str(summary_result.get("text", "")).strip()
-    summary_heading = f"# Chapter {chapter:03d} Accepted Summary"
-    if not summary.startswith(summary_heading):
-        summary = summary_heading + "\n\n" + summary
-    handover_result = attempt_model_chain(
-        _handover_prompt(story_id, chapter, draft, summary),
+    continuity_options = {
+        **(options or {}),
+        "output_schema_path": str(ACCEPTED_CONTINUITY_SCHEMA_PATH),
+        "structured_output": True,
+    }
+    grounding_options = {
+        **(options or {}),
+        "output_schema_path": str(ACCEPTANCE_GROUNDING_SCHEMA_PATH),
+        "structured_output": True,
+    }
+    continuity_result = attempt_structured_model_chain(
+        _continuity_prompt(story_id, chapter, draft),
         chain,
         config,
-        options,
+        lambda text: parse_accepted_continuity(text, story_id, chapter),
+        lambda text, error: _structured_repair_prompt("AcceptedContinuityV1", text, error),
+        continuity_options,
     )
-    if not handover_result.get("ok"):
-        raise RuntimeError(f"handover update failed for all configured models: {handover_result.get('attempts', [])}")
-    handover = str(handover_result.get("text", "")).strip()
-    if not handover.startswith("# Story Handover"):
-        handover = "# Story Handover\n\n" + handover
+    if not continuity_result.get("ok"):
+        raise RuntimeError(
+            f"accepted continuity failed for all configured models: {continuity_result.get('attempts', [])}"
+        )
+    continuity = continuity_result["value"]
+
+    def check_grounding(candidate: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        result = attempt_structured_model_chain(
+            _grounding_prompt(story_id, chapter, draft, candidate),
+            chain,
+            config,
+            lambda text: parse_acceptance_grounding(text, story_id, chapter),
+            lambda text, error: _structured_repair_prompt(
+                "AcceptanceGroundingDecisionV1",
+                text,
+                error,
+            ),
+            grounding_options,
+        )
+        if not result.get("ok"):
+            raise RuntimeError(
+                f"acceptance grounding failed for all configured models: {result.get('attempts', [])}"
+            )
+        decision = result["value"]
+        if _contains_thinking_trace(candidate):
+            decision = {**decision, "grounded": False, "thinking_trace_detected": True}
+        return decision, result
+
+    grounding, grounding_result = check_grounding(continuity)
+    semantic_repair_result: dict[str, Any] | None = None
+    second_grounding_result: dict[str, Any] | None = None
+    if not grounding["grounded"]:
+        semantic_repair_result = attempt_structured_model_chain(
+            _semantic_repair_prompt(story_id, chapter, draft, continuity, grounding),
+            chain,
+            config,
+            lambda text: parse_accepted_continuity(text, story_id, chapter),
+            lambda text, error: _structured_repair_prompt("AcceptedContinuityV1", text, error),
+            continuity_options,
+        )
+        if not semantic_repair_result.get("ok"):
+            raise RuntimeError(
+                f"accepted continuity semantic repair failed: {semantic_repair_result.get('attempts', [])}"
+            )
+        continuity = semantic_repair_result["value"]
+        grounding, second_grounding_result = check_grounding(continuity)
+        if not grounding["grounded"]:
+            raise RuntimeError(f"accepted continuity remained ungrounded after one repair: {grounding}")
+
+    summary, handover = render_accepted_continuity(continuity)
 
     chapter_path = story_path / "chapters" / f"chapter_{chapter:03d}.md"
     summary_path = story_path / "summaries" / f"summary_chapter_{chapter:03d}.md"
     handover_path = story_path / "context" / "handover.md"
-    for path, content in (
-        (chapter_path, draft.rstrip() + "\n"),
-        (summary_path, summary + "\n"),
-        (handover_path, handover + "\n"),
-    ):
-        assert_story_write_allowed(path, story_path)
-        safe_write_file(path, content, story_path)
-    chapter_state_path, story_state_path = _update_state(story_path, chapter)
-    run_id = str(uuid4())
-    provenance_path = write_run_provenance(
+    chapter_state_path, chapter_state_content, story_state_path, story_state_content = _prepare_state(
         story_path,
         chapter,
+    )
+    run_id = str(uuid4())
+    attempts = [*continuity_result.get("attempts", []), *grounding_result.get("attempts", [])]
+    if semantic_repair_result is not None:
+        attempts.extend(semantic_repair_result.get("attempts", []))
+    if second_grounding_result is not None:
+        attempts.extend(second_grounding_result.get("attempts", []))
+    provenance_payload = build_run_provenance_payload(
+        chapter,
         "acceptance",
-        {
-            "model_profile": handover_result.get("model_profile"),
-            "attempts": [*summary_result.get("attempts", []), *handover_result.get("attempts", [])],
-        },
+        {"model_profile": continuity_result.get("model_profile"), "attempts": attempts},
         config,
         {
             "accepted_chapter": str(chapter_path.relative_to(story_path)),
@@ -169,8 +277,25 @@ def accept_draft(
             "story_state": str(story_state_path.relative_to(story_path)),
             "review_gate": str(gate_path.relative_to(story_path)),
         },
-        {"run_id": run_id, "source": str(draft_path.relative_to(story_path))},
+        {
+            "run_id": run_id,
+            "source": str(draft_path.relative_to(story_path)),
+            "grounding": grounding,
+        },
     )
+
+    prepared = (
+        (chapter_path, draft.rstrip() + "\n"),
+        (summary_path, summary),
+        (handover_path, handover),
+        (chapter_state_path, chapter_state_content),
+        (story_state_path, story_state_content),
+    )
+    for path, _ in prepared:
+        assert_story_write_allowed(path, story_path)
+    for path, content in prepared:
+        safe_write_file(path, content, story_path)
+    provenance_path = write_prepared_run_provenance(story_path, provenance_payload)
     return {
         "accepted_chapter": chapter_path,
         "accepted_summary": summary_path,

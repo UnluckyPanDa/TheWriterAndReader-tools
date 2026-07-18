@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AcceptedContinuityV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "story_id", "chapter", "summary", "handover"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "story_id": {"type": "string", "minLength": 1},
+    "chapter": {"type": "integer", "minimum": 1},
+    "summary": {"$ref": "#/$defs/summary"},
+    "handover": {"$ref": "#/$defs/handover"}
+  },
+  "$defs": {
+    "text_list": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["events", "decisions", "discoveries", "relationship_changes", "practical_state", "unresolved_pressure"],
+      "properties": {
+        "events": {"$ref": "#/$defs/text_list"},
+        "decisions": {"$ref": "#/$defs/text_list"},
+        "discoveries": {"$ref": "#/$defs/text_list"},
+        "relationship_changes": {"$ref": "#/$defs/text_list"},
+        "practical_state": {"$ref": "#/$defs/text_list"},
+        "unresolved_pressure": {"$ref": "#/$defs/text_list"}
+      }
+    },
+    "handover": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ending_situation", "character_intentions", "relationship_state", "open_pressure", "reader_questions", "continuity_details"],
+      "properties": {
+        "ending_situation": {"$ref": "#/$defs/text_list"},
+        "character_intentions": {"$ref": "#/$defs/text_list"},
+        "relationship_state": {"$ref": "#/$defs/text_list"},
+        "open_pressure": {"$ref": "#/$defs/text_list"},
+        "reader_questions": {"$ref": "#/$defs/text_list"},
+        "continuity_details": {"$ref": "#/$defs/text_list"}
+      }
+    }
+  }
+}

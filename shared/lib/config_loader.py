@@ -64,6 +64,8 @@ def load_config_example(tools_repo_path: str | Path | None = None) -> dict[str, 
     """Load config.example.yaml from the tools repository."""
     root = Path(tools_repo_path).expanduser().resolve() if tools_repo_path else _repo_root()
     path = root / "config.example.yaml"
+    if not path.exists() and tools_repo_path is None:
+        path = Path(__file__).resolve().parents[1] / "templates" / "config.example.yaml"
     config = load_yaml(path)
     config["_source_path"] = str(path)
     config["_used_example_config"] = True

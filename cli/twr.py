@@ -10,7 +10,7 @@ TOOLS_REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(TOOLS_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLS_REPO_ROOT))
 
-from cli.commands import config, doctor, publish, review, web, wizard, write
+from cli.commands import config, doctor, publish, review, setup, web, wizard, write
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,6 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="twr", description="TheWriterAndReader local tools.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     config.register(subparsers)
+    setup.register(subparsers)
     doctor.register(subparsers)
     write.register(subparsers)
     review.register(subparsers)

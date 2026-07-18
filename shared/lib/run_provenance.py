@@ -33,6 +33,19 @@ def write_run_provenance(
 ) -> Path:
     """Persist latest and immutable run records without storing prompts."""
     root = Path(story_path).expanduser().resolve(strict=False)
+    payload = build_run_provenance_payload(chapter, operation, result, config, output_paths, details)
+    return write_prepared_run_provenance(root, payload)
+
+
+def build_run_provenance_payload(
+    chapter: int,
+    operation: str,
+    result: dict[str, Any],
+    config: dict[str, Any],
+    output_paths: dict[str, str],
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Prepare a provenance record without writing it."""
     details = details or {}
     run_id = str(details.get("run_id") or uuid4())
     payload = {
@@ -46,6 +59,15 @@ def write_run_provenance(
         "outputs": output_paths,
     }
     payload.update({key: value for key, value in details.items() if key != "run_id"})
+    return payload
+
+
+def write_prepared_run_provenance(story_path: str | Path, payload: dict[str, Any]) -> Path:
+    """Persist a previously prepared provenance record."""
+    root = Path(story_path).expanduser().resolve(strict=False)
+    chapter = int(payload["chapter"])
+    operation = str(payload["operation"])
+    run_id = str(payload["run_id"])
     history_path = root / "runs" / f"chapter_{chapter:03d}" / run_id / f"{operation}.json"
     assert_story_write_allowed(history_path, root)
     safe_write_file(history_path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n", root)

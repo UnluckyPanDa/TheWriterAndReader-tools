@@ -4,20 +4,18 @@ import json
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 import requests
 
-REPO_ROOT_FOR_IMPORT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT_FOR_IMPORT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT_FOR_IMPORT))
+from shared.lib.config_loader import load_config
+from shared.lib.ollama_check import get_ollama_models
 
-from scripts.build_context import REPO_ROOT
-from scripts.ollama_check import closest_model, get_ollama_models, load_models_config
 
-DEFAULT_BASE_URL = "http://localhost:11434"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_TIMEOUT_SECONDS = 900.0
 DEFAULT_DISCOVERY_TIMEOUT_SECONDS = 10.0
 DEFAULT_CONTEXT_PROBE_TIMEOUT_SECONDS = 30.0
@@ -47,48 +45,29 @@ def _as_float(value: Any, default: float) -> float:
         return default
 
 
-def _ollama_settings(config: dict[str, Any]) -> dict[str, Any]:
-    settings = config.get("ollama") or {}
-    return settings if isinstance(settings, dict) else {}
-
-
-def _configured_role_model(role: str, config: dict[str, Any]) -> str | None:
-    models = config.get("models") or {}
-    role_config = models.get(role) or {}
-    if not isinstance(role_config, dict):
-        return None
-    return role_config.get("preferred") or role_config.get("fallback")
-
-
-def _report_title(role: str) -> str:
-    return "# Review Report" if role == "reviewer" else "# Local Ollama Generation Failed"
-
-
-def _failure_report(
-    role: str,
-    model: str | None,
-    failures: list[str],
-    diagnostics: list[str],
-) -> str:
-    body = [
-        _report_title(role),
-        "",
-        "## Summary",
-        "",
-        "WARNING: Local Ollama did not return usable text.",
-        "",
-        f"Model: `{model or 'unresolved'}`",
-        "",
-    ]
-    if diagnostics:
-        body.extend(["## Diagnostics", ""])
-        body.extend(f"- {item}" for item in diagnostics)
-        body.append("")
-    if failures:
-        body.extend(["## Attempts", ""])
-        body.extend(f"- {item}" for item in failures)
-        body.append("")
-    return "\n".join(body)
+def _configured_ollama(config: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    providers = config.get("providers", {})
+    profiles = config.get("model_profiles", {})
+    if not isinstance(providers, dict) or not isinstance(profiles, dict):
+        return {}, []
+    for provider_name, provider in providers.items():
+        command = provider.get("command") if isinstance(provider, dict) else None
+        if (
+            isinstance(provider, dict)
+            and provider.get("enabled", False)
+            and provider.get("type") == "local_cli"
+            and isinstance(command, str)
+            and Path(command).name.lower() == "ollama"
+        ):
+            models = [
+                str(profile["model"])
+                for profile in profiles.values()
+                if isinstance(profile, dict)
+                and profile.get("provider") == provider_name
+                and isinstance(profile.get("model"), str)
+            ]
+            return provider, models
+    return {}, []
 
 
 def _extract_context_length(value: Any, key_path: str = "") -> int | None:
@@ -177,19 +156,18 @@ def select_ollama_model(
     requested_model: str | None = None,
     interactive: bool | None = None,
 ) -> str | None:
-    config = load_models_config(repo_root / "config" / "models.yaml")
-    settings = _ollama_settings(config)
+    del role, repo_root
+    config = load_config()
+    settings, configured_models = _configured_ollama(config)
     base_url = settings.get("base_url", DEFAULT_BASE_URL)
     discovery_timeout = _as_float(
         settings.get("discovery_timeout_seconds"),
         DEFAULT_DISCOVERY_TIMEOUT_SECONDS,
     )
     reachable, installed, error = get_ollama_models(base_url, timeout=discovery_timeout)
-    default_model = (
-        closest_model(role, config, installed)
-        if reachable and installed
-        else _configured_role_model(role, config)
-    )
+    default_model = next((name for name in configured_models if name in installed), None)
+    if default_model is None:
+        default_model = configured_models[0] if configured_models else (installed[0] if installed else None)
 
     if reachable and installed:
         installed = sorted(installed)
@@ -241,64 +219,26 @@ def _http_generate(
     prompt: str,
     options: dict[str, Any],
     timeout: float,
-    stream: bool,
 ) -> str:
     payload = {
         "model": model,
         "prompt": prompt,
-        "stream": stream,
+        "stream": False,
+        "think": False,
         "options": options,
     }
     response = requests.post(
         f"{base_url.rstrip('/')}/api/generate",
         json=payload,
         timeout=timeout,
-        stream=stream,
     )
     response.raise_for_status()
-
-    if not stream:
-        data = response.json()
-        if data.get("error"):
-            raise RuntimeError(data["error"])
-        text = (data.get("response") or "").strip()
-        if not text:
-            raise RuntimeError("Ollama HTTP returned a blank/null response.")
-        return text
-
-    parts: list[str] = []
-    for line in response.iter_lines(decode_unicode=True):
-        if not line:
-            continue
-        data = json.loads(line)
-        if data.get("error"):
-            raise RuntimeError(data["error"])
-        parts.append(data.get("response") or "")
-    text = "".join(parts).strip()
+    data = response.json()
+    if data.get("error"):
+        raise RuntimeError(data["error"])
+    text = (data.get("response") or "").strip()
     if not text:
-        raise RuntimeError("Ollama HTTP stream returned a blank/null response.")
-    return text
-
-
-def _cli_generate(model: str, prompt: str, timeout: float) -> str:
-    ollama_cli = shutil.which("ollama")
-    if not ollama_cli:
-        raise RuntimeError("ollama CLI not found.")
-
-    result = subprocess.run(
-        [ollama_cli, "run", model],
-        input=prompt,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
-    if result.returncode != 0:
-        stderr = result.stderr.strip()
-        raise RuntimeError(stderr[-500:] if stderr else f"exit code {result.returncode}")
-    text = result.stdout.strip()
-    if not text:
-        raise RuntimeError("ollama CLI returned a blank/null response.")
+        raise RuntimeError("Ollama HTTP returned a blank/null response.")
     return text
 
 
@@ -312,26 +252,26 @@ def call_ollama(
     temperature: float = 0.2,
     num_predict: int | None = None,
 ) -> str:
-    config = load_models_config(repo_root / "config" / "models.yaml")
-    settings = _ollama_settings(config)
+    del repo_root
+    config = load_config()
+    settings, configured_models = _configured_ollama(config)
     base_url = settings.get("base_url", DEFAULT_BASE_URL)
     timeout = _as_float(settings.get("timeout_seconds"), DEFAULT_TIMEOUT_SECONDS)
-    cli_timeout = _as_float(settings.get("cli_timeout_seconds"), timeout)
     context_probe_timeout = _as_float(
         settings.get("context_probe_timeout_seconds"),
         DEFAULT_CONTEXT_PROBE_TIMEOUT_SECONDS,
     )
     configured_num_ctx = _as_int(settings.get("num_ctx"), DEFAULT_NUM_CTX)
-    selected_model = model or requested_model or select_ollama_model(
-        role,
-        repo_root=repo_root,
-        interactive=interactive,
-    )
+    selected_model = model or requested_model
+    if selected_model is None:
+        reachable, installed, _ = get_ollama_models(base_url, timeout=DEFAULT_DISCOVERY_TIMEOUT_SECONDS)
+        selected_model = next((name for name in configured_models if not reachable or name in installed), None)
+        if selected_model is None and reachable and installed:
+            selected_model = installed[0]
 
     diagnostics: list[str] = []
-    failures: list[str] = []
     if not selected_model:
-        return _failure_report(role, selected_model, ["No local Ollama model could be selected."], diagnostics)
+        raise RuntimeError("No local Ollama model could be selected.")
 
     context_limit, context_diagnostics = inspect_model_context(
         base_url,
@@ -346,10 +286,7 @@ def call_ollama(
     diagnostics.append(f"Estimated prompt tokens: {estimated_prompt_tokens}")
 
     if estimated_prompt_tokens >= effective_num_ctx:
-        failures.append(
-            "Prompt is likely larger than the available local model context; reduce context before generation."
-        )
-        return _failure_report(role, selected_model, failures, diagnostics)
+        raise RuntimeError("Prompt is likely larger than the available local model context; reduce context before generation.")
 
     options: dict[str, Any] = {
         "temperature": temperature,
@@ -359,18 +296,7 @@ def call_ollama(
         options["num_predict"] = num_predict
 
     try:
-        return _http_generate(base_url, selected_model, prompt, options, timeout, stream=False)
+        return _http_generate(base_url, selected_model, prompt, options, timeout)
     except Exception as exc:
-        failures.append(f"HTTP non-stream: {exc}")
-
-    try:
-        return _http_generate(base_url, selected_model, prompt, options, timeout, stream=True)
-    except Exception as exc:
-        failures.append(f"HTTP stream: {exc}")
-
-    try:
-        return _cli_generate(selected_model, prompt, cli_timeout)
-    except Exception as exc:
-        failures.append(f"ollama CLI: {exc}")
-
-    return _failure_report(role, selected_model, failures, diagnostics)
+        detail = "; ".join(diagnostics[-3:])
+        raise RuntimeError(f"Ollama HTTP generation failed: {exc}. {detail}") from exc

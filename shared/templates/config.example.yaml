@@ -123,32 +123,16 @@ writing_stages:
     provider_group: local_first_with_codex_fallback
 writing_policy:
   codex_intelligence_map:
-    low:
-      model: gpt-5.6-terra
-      reasoning_effort: high
-    medium:
-      model: gpt-5.6-terra
-      reasoning_effort: high
-    high:
-      model: gpt-5.6-terra
-      reasoning_effort: high
-    very_high:
-      model: gpt-5.6-terra
-      reasoning_effort: high
+    low: {model: gpt-5.6-terra, reasoning_effort: high}
+    medium: {model: gpt-5.6-terra, reasoning_effort: high}
+    high: {model: gpt-5.6-terra, reasoning_effort: high}
+    very_high: {model: gpt-5.6-terra, reasoning_effort: high}
 review_policy:
   codex_intelligence_map:
-    low:
-      model: gpt-5.6-sol
-      reasoning_effort: high
-    medium:
-      model: gpt-5.6-sol
-      reasoning_effort: high
-    high:
-      model: gpt-5.6-sol
-      reasoning_effort: high
-    very_high:
-      model: gpt-5.6-sol
-      reasoning_effort: high
+    low: {model: gpt-5.6-sol, reasoning_effort: high}
+    medium: {model: gpt-5.6-sol, reasoning_effort: high}
+    high: {model: gpt-5.6-sol, reasoning_effort: high}
+    very_high: {model: gpt-5.6-sol, reasoning_effort: high}
   rereview_after_writer_explanation:
     minimum_intelligence: very_high
     provider_group: codex_review

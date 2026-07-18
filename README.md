@@ -9,7 +9,8 @@ This repository contains code, prompts, templates, policies, schemas, skills, CL
 - `cli/`: user-facing `twr` command entry points.
 - `tools/`: writing, review, publish, and story-wizard tool implementations.
 - `shared/`: reusable templates, policies, schemas, config helpers, and libraries.
-- `.agents/skills/`: thin tool-area skills only.
+- `.agents/skills/twr/`: the single installable cross-device skill.
+- `.agents/skills/twr-*/`: compatibility tool-area skills for existing installs.
 - `tests/`: validation and runtime tests.
 
 ## Runtime Config
@@ -18,6 +19,37 @@ Real config belongs outside this repository at:
 
 ```text
 ~/.config/the-writer-and-reader/config.yaml
+```
+
+## Install and Initialize on Another Device
+
+In Codex, ask it to install the skill from this URL, then restart Codex:
+
+```text
+https://github.com/UnluckyPanDa/TheWriterAndReader-tools/tree/main/.agents/skills/twr
+```
+
+In the new Codex session, say `Initialize TWR` or invoke `$twr`. The skill runs
+one idempotent first-use setup that:
+
+1. provisions a private Python 3.11 runtime when needed;
+2. installs the bundled TWR wheel and its declared dependencies;
+3. creates `~/.config/the-writer-and-reader/config.yaml` only when missing;
+4. detects reachable Ollama models and selects an installed local model for the new config;
+5. checks Python, `jsonschema`, Ollama reachability, loopback permission, and configured fallback-chain models;
+6. records initialization success only after `twr doctor` passes.
+
+No repository checkout, manual virtual environment, pip command, `PYTHONPATH`,
+or PATH change is required. Later runs reuse the private runtime. The only
+remaining user-managed setup is provider, endpoint, model, and explicitly
+enabled online credentials in the external config.
+
+After initialization, create and validate a workspace with:
+
+```text
+twr wizard workspace init --workspace /path/to/workspace --workspace-id my-workspace
+twr wizard story add --workspace /path/to/workspace --story story-1 --title "Story One" --language en
+twr doctor --workspace /path/to/workspace
 ```
 
 Use `config.example.yaml` as the import/export shape. Online API and Codex CLI
@@ -102,9 +134,11 @@ for login and Tailscale Serve or Funnel for the path to the loopback server.
 
 ## Story Writing and Review Skills
 
-Use `twr-writing-tool` for story drafting work and `twr-review-tool` for story
-review work. Both skills operate on an external story workspace; do not use this
-tools repository as the story workspace.
+Use the unified `twr` skill for setup, writing, review, publishing, and wizard
+workflows. Existing `twr-writing-tool`, `twr-review-tool`, `twr-publish-tool`,
+and `twr-story-wizard` installs remain compatible. All skills operate on an
+external story workspace; do not use this tools repository as the story
+workspace.
 
 Normal chapter flow:
 
@@ -165,4 +199,4 @@ updates inside the selected story folder.
 - Do not commit real config or API keys.
 - Do not store story content in this tools repository.
 - Do not edit story canon directly from writing or review tools.
-- Use one skill per tool area, not one skill per reviewer or role.
+- Use the unified `twr` skill for new installs; keep tool-area skills only for compatibility.
