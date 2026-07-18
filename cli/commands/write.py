@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 
 REVISION_MODES = (
@@ -18,6 +19,14 @@ REVISION_MODES = (
 )
 
 
+def _progress(message: str) -> None:
+    print(f"[twr] {message}", file=sys.stderr, flush=True)
+
+
+def _progress_options(**options: object) -> dict[str, object]:
+    return {"progress_callback": _progress, **options}
+
+
 def _build_pack(args: argparse.Namespace) -> int:
     from tools.writing.build_write_pack import build_write_pack
 
@@ -28,7 +37,15 @@ def _build_pack(args: argparse.Namespace) -> int:
 def _generate(args: argparse.Namespace) -> int:
     from tools.writing.generate_draft import generate_draft
 
-    print(generate_draft(args.workspace, args.story, args.chapter, args.config))
+    print(
+        generate_draft(
+            args.workspace,
+            args.story,
+            args.chapter,
+            args.config,
+            _progress_options(),
+        )
+    )
     return 0
 
 
@@ -58,7 +75,7 @@ def _revise(args: argparse.Namespace) -> int:
             args.chapter,
             args.mode,
             args.config,
-            {"attempts": args.attempts, "temperature": args.temperature},
+            _progress_options(attempts=args.attempts, temperature=args.temperature),
         )
     )
     return 0
@@ -67,7 +84,13 @@ def _revise(args: argparse.Namespace) -> int:
 def _plan_scene(args: argparse.Namespace) -> int:
     from tools.writing.scene_workflow import plan_scenes
 
-    outputs = plan_scenes(args.workspace, args.story, args.chapter, args.config)
+    outputs = plan_scenes(
+        args.workspace,
+        args.story,
+        args.chapter,
+        args.config,
+        _progress_options(),
+    )
     print(outputs["scene_contract"])
     print(outputs["scene_skeleton"])
     return 0
@@ -76,7 +99,16 @@ def _plan_scene(args: argparse.Namespace) -> int:
 def _draft_scene(args: argparse.Namespace) -> int:
     from tools.writing.scene_workflow import draft_scene
 
-    print(draft_scene(args.workspace, args.story, args.chapter, args.scene, args.config))
+    print(
+        draft_scene(
+            args.workspace,
+            args.story,
+            args.chapter,
+            args.scene,
+            args.config,
+            _progress_options(),
+        )
+    )
     return 0
 
 
@@ -90,7 +122,13 @@ def _assemble_chapter(args: argparse.Namespace) -> int:
 def _accept(args: argparse.Namespace) -> int:
     from tools.writing.accept_draft import accept_draft
 
-    outputs = accept_draft(args.workspace, args.story, args.chapter, args.config)
+    outputs = accept_draft(
+        args.workspace,
+        args.story,
+        args.chapter,
+        args.config,
+        _progress_options(),
+    )
     for name, path in outputs.items():
         print(f"{name}: {path}")
     return 0
@@ -99,7 +137,17 @@ def _accept(args: argparse.Namespace) -> int:
 def _revise_scene(args: argparse.Namespace) -> int:
     from tools.writing.revise_draft import revise_scene
 
-    print(revise_scene(args.workspace, args.story, args.chapter, args.scene, args.mode, args.config))
+    print(
+        revise_scene(
+            args.workspace,
+            args.story,
+            args.chapter,
+            args.scene,
+            args.mode,
+            args.config,
+            _progress_options(),
+        )
+    )
     return 0
 
 

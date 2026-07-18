@@ -186,11 +186,13 @@ def accept_draft(
         **(options or {}),
         "output_schema_path": str(ACCEPTED_CONTINUITY_SCHEMA_PATH),
         "structured_output": True,
+        "progress_label": "accepted continuity",
     }
     grounding_options = {
         **(options or {}),
         "output_schema_path": str(ACCEPTANCE_GROUNDING_SCHEMA_PATH),
         "structured_output": True,
+        "progress_label": "acceptance grounding",
     }
     continuity_result = attempt_structured_model_chain(
         _continuity_prompt(story_id, chapter, draft),
