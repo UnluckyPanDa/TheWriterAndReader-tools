@@ -10,7 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 from shared.lib.config_loader import load_config
-from shared.lib.model_router import attempt_model_chain, select_model_for_stage
+from shared.lib.model_router import attempt_model_chain, attempt_structured_model_chain, select_model_for_stage
 from shared.lib.path_rules import assert_story_write_allowed
 from shared.lib.run_provenance import require_explicit_runtime_config, write_run_provenance
 from shared.lib.scene_contract import SCHEMA_PATH as SCENE_CONTRACT_SCHEMA_PATH, parse_scene_contract
@@ -404,34 +404,17 @@ def generate_scene_contract(
         "output_schema_path": str(SCENE_CONTRACT_SCHEMA_PATH),
         "structured_output": True,
     }
-    result = attempt_model_chain(
+    result = attempt_structured_model_chain(
         build_scene_contract_prompt(story_id, chapter, write_pack),
         chain,
         config,
+        lambda text: parse_scene_contract(text, story_id, chapter),
+        lambda text, error: _scene_contract_repair_prompt(story_id, chapter, text, error),
         router_options,
     )
     if not result.get("ok"):
         raise RuntimeError(f"scene planning failed for all configured models: {result.get('attempts', [])}")
-
-    text = str(result.get("text", ""))
-    try:
-        return parse_scene_contract(text, story_id, chapter), result
-    except ValueError as first_error:
-        repair = attempt_model_chain(
-            _scene_contract_repair_prompt(story_id, chapter, text, str(first_error)),
-            chain,
-            config,
-            router_options,
-        )
-        combined_attempts = [*result.get("attempts", []), *repair.get("attempts", [])]
-        if not repair.get("ok"):
-            raise RuntimeError(f"scene contract repair failed for all configured models: {combined_attempts}")
-        try:
-            contract = parse_scene_contract(str(repair.get("text", "")), story_id, chapter)
-        except ValueError as second_error:
-            raise RuntimeError(f"scene contract remained invalid after one repair: {second_error}") from second_error
-        repair["attempts"] = combined_attempts
-        return contract, repair
+    return result["value"], result
 
 
 def generate_scene_skeleton(
@@ -448,40 +431,23 @@ def generate_scene_skeleton(
         "output_schema_path": str(SCENE_SKELETON_SCHEMA_PATH),
         "structured_output": True,
     }
-    result = attempt_model_chain(
+    result = attempt_structured_model_chain(
         build_scene_skeleton_prompt(story_id, chapter, scene_contract),
         chain,
         config,
+        lambda text: parse_scene_skeleton(text, story_id, chapter, scene_ids),
+        lambda text, error: _scene_skeleton_repair_prompt(
+            story_id,
+            chapter,
+            scene_contract,
+            text,
+            error,
+        ),
         router_options,
     )
     if not result.get("ok"):
         raise RuntimeError(f"scene skeleton planning failed for all configured models: {result.get('attempts', [])}")
-
-    text = str(result.get("text", ""))
-    try:
-        return parse_scene_skeleton(text, story_id, chapter, scene_ids), result
-    except ValueError as first_error:
-        repair = attempt_model_chain(
-            _scene_skeleton_repair_prompt(
-                story_id,
-                chapter,
-                scene_contract,
-                text,
-                str(first_error),
-            ),
-            chain,
-            config,
-            router_options,
-        )
-        combined_attempts = [*result.get("attempts", []), *repair.get("attempts", [])]
-        if not repair.get("ok"):
-            raise RuntimeError(f"scene skeleton repair failed for all configured models: {combined_attempts}")
-        try:
-            skeleton = parse_scene_skeleton(str(repair.get("text", "")), story_id, chapter, scene_ids)
-        except ValueError as second_error:
-            raise RuntimeError(f"scene skeleton remained invalid after one repair: {second_error}") from second_error
-        repair["attempts"] = combined_attempts
-        return skeleton, repair
+    return result["value"], result
 
 
 def generate_draft(

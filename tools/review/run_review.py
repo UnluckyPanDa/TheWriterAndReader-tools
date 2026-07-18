@@ -12,7 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from shared.lib.config_loader import load_config
-from shared.lib.model_router import attempt_model_chain, select_model_for_reviewer
+from shared.lib.model_router import attempt_structured_model_chain, select_model_for_reviewer
 from shared.lib.path_rules import assert_story_write_allowed
 from shared.lib.review_parser import (
     REVIEW_DECISION_SCHEMA_PATH,
@@ -121,6 +121,31 @@ def _review_prompt(
 - Do not wrap the JSON in a Markdown fence and do not add commentary.
 
 {contract}
+"""
+
+
+def _review_repair_prompt(
+    story_id: str,
+    chapter: int,
+    layer: str,
+    reviewer_id: str,
+    invalid_text: str,
+    error: str,
+) -> str:
+    return f"""Repair an invalid ReviewDecisionV1 JSON response.
+
+reviewer_id: {reviewer_id}
+reviewer_type: {layer}
+story_id: {story_id}
+chapter: {chapter}
+
+Validation error:
+{error}
+
+Invalid response:
+{invalid_text}
+
+Return only one corrected JSON object matching ReviewDecisionV1. Preserve the exact identity values.
 """
 
 
@@ -235,16 +260,26 @@ def _write_review_report(
         raise RuntimeError(
             f"reviewer {reviewer_id} could not be rendered as a compatible report: {', '.join(markdown_errors)}"
         )
-    history_path = story_path / "runs" / f"chapter_{chapter:03d}" / run_id / f"{layer}.{reviewer_id}.json"
+    if promote_current:
+        _write_review_history(story_path, chapter, layer, reviewer_id, record)
+        _promote_review_record(story_path, report_path, record_path, record)
+    return report_path, record_path, record
+
+
+def _write_review_history(
+    story_path: Path,
+    chapter: int,
+    layer: str,
+    reviewer_id: str,
+    record: dict[str, Any],
+) -> Path:
+    history_path = story_path / "runs" / f"chapter_{chapter:03d}" / str(record["run_id"]) / f"{layer}.{reviewer_id}.json"
     assert_story_write_allowed(history_path, story_path)
-    safe_write_file(
+    return safe_write_file(
         history_path,
         json.dumps(record, ensure_ascii=False, indent=2) + "\n",
         story_path,
     )
-    if promote_current:
-        _promote_review_record(story_path, report_path, record_path, record)
-    return report_path, record_path, record
 
 
 def _promote_review_record(
@@ -347,6 +382,18 @@ def _current_review_row(
     can_block: bool,
 ) -> tuple[Path, dict[str, Any]] | None:
     """Load canonical JSON first and fail closed when an existing record is invalid."""
+    gate_path = _gate_path(story_path, chapter)
+    if gate_path.exists():
+        gate = gate_path.read_text(encoding="utf-8")
+        run_state = re.search(r"^run_state:\s*([^\n]+)$", gate, re.MULTILINE)
+        draft_hash = re.search(r"^draft_sha256:\s*([^\n]+)$", gate, re.MULTILINE)
+        if (
+            run_state
+            and run_state.group(1).strip() != "complete"
+            and draft_hash
+            and draft_hash.group(1).strip() == _draft_hash(story_path, chapter)
+        ):
+            return None
     record_path = _review_record_path(story_path, chapter, layer, reviewer_id)
     record = _load_current_record(story_path, story_id, chapter, layer, reviewer_id)
     if record is not None:
@@ -699,12 +746,36 @@ def run_review(
         codex_thread_ids: set[str] = set()
         codex_subagent_thread_ids: set[str] = set()
         seen_codex_threads: set[str] = set()
-        router_options = {**(options or {}), "output_schema_path": str(REVIEW_DECISION_SCHEMA_PATH)}
+        router_options = {
+            **(options or {}),
+            "output_schema_path": str(REVIEW_DECISION_SCHEMA_PATH),
+            "structured_output": True,
+        }
         for layer, reviewer_id, settings in review_specs:
             profile = _reviewer_profile(story_path, layer, reviewer_id, settings)
             prompt = _review_prompt(story_id, chapter, layer, reviewer_id, settings, profile, review_pack)
             model_chain = _model_chain(config, settings)
-            result = attempt_model_chain(prompt, model_chain, config, router_options)
+            result = attempt_structured_model_chain(
+                prompt,
+                model_chain,
+                config,
+                lambda text, current_id=reviewer_id, current_layer=layer: parse_review_decision(
+                    text,
+                    current_id,
+                    current_layer,
+                    story_id,
+                    chapter,
+                ),
+                lambda text, error, current_id=reviewer_id, current_layer=layer: _review_repair_prompt(
+                    story_id,
+                    chapter,
+                    current_layer,
+                    current_id,
+                    text,
+                    error,
+                ),
+                router_options,
+            )
             if not result.get("ok"):
                 raise RuntimeError(f"reviewer {reviewer_id} failed for all configured models: {result.get('attempts', [])}")
             if result.get("provider_type") == "codex_cli":
@@ -739,6 +810,15 @@ def run_review(
             rows.append(_row_from_decision(layer, reviewer_id, can_block, record["decision"]))
             attempts.extend(result.get("attempts", []))
 
+        for report_path, record_path, record in pending_records:
+            reviewer = record["reviewer"]
+            _write_review_history(
+                story_path,
+                chapter,
+                str(reviewer["type"]),
+                str(reviewer["id"]),
+                record,
+            )
         for report_path, record_path, record in pending_records:
             _promote_review_record(story_path, report_path, record_path, record)
         combined_path = _combine_reviews(story_path, chapter, reports)

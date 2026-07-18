@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWR"
+  short_description: "Set up and run TheWriterAndReader tools"
+  default_prompt: "Use $twr to initialize TWR and run the requested story workflow."

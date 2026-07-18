@@ -5,8 +5,9 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from tools.review.run_review import run_review
+from tools.review.run_review import rebuild_review_gate, run_review
 from tools.writing.accept_draft import accept_draft
 
 
@@ -50,6 +51,85 @@ class AcceptDraftTests(unittest.TestCase):
 
             with self.assertRaisesRegex(RuntimeError, "changed after"):
                 accept_draft(workspace, "story-1", 1, config)
+
+    def test_failed_grounding_repair_writes_no_acceptance_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            story = workspace / "fixture_stories" / "story-1"
+            config = str(FIXTURES / "mock_config.yaml")
+            run_review(workspace, "story-1", 1, config)
+            watched = [
+                story / "chapters" / "chapter_001.md",
+                story / "summaries" / "summary_chapter_001.md",
+                story / "context" / "handover.md",
+                story / "state" / "chapter_status.yaml",
+                story / "state" / "story_status.yaml",
+            ]
+            before = {path: path.read_bytes() if path.exists() else None for path in watched}
+            continuity = {
+                "schema_version": 1,
+                "story_id": "story-1",
+                "chapter": 1,
+                "summary": {key: [] for key in ("events", "decisions", "discoveries", "relationship_changes", "practical_state", "unresolved_pressure")},
+                "handover": {key: [] for key in ("ending_situation", "character_intentions", "relationship_state", "open_pressure", "reader_questions", "continuity_details")},
+            }
+            ungrounded = {
+                "schema_version": 1,
+                "story_id": "story-1",
+                "chapter": 1,
+                "grounded": False,
+                "unsupported_claims": ["unsupported"],
+                "name_conflicts": [],
+                "thinking_trace_detected": False,
+            }
+            with patch(
+                "tools.writing.accept_draft.attempt_structured_model_chain",
+                side_effect=[
+                    {"ok": True, "value": continuity, "attempts": []},
+                    {"ok": True, "value": ungrounded, "attempts": []},
+                    {"ok": True, "value": continuity, "attempts": []},
+                    {"ok": True, "value": ungrounded, "attempts": []},
+                ],
+            ):
+                with self.assertRaisesRegex(RuntimeError, "remained ungrounded"):
+                    accept_draft(workspace, "story-1", 1, config)
+
+            self.assertEqual(
+                {path: path.read_bytes() if path.exists() else None for path in watched},
+                before,
+            )
+            self.assertFalse((story / "runs" / "chapter_001_acceptance.json").exists())
+
+    def test_failed_reviewer_preserves_current_records_but_blocks_stale_gate_rebuild(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            story = workspace / "fixture_stories" / "story-1"
+            config = str(FIXTURES / "mock_config.yaml")
+            run_review(workspace, "story-1", 1, config)
+            current = story / "reviews" / "chapter" / "001"
+            before = {
+                path.name: path.read_bytes()
+                for path in current.iterdir()
+                if path.is_file() and path.name.startswith(("standard.", "series.", "special."))
+            }
+
+            with patch(
+                "tools.review.run_review.attempt_structured_model_chain",
+                return_value={"ok": False, "attempts": [{"status": "invalid"}]},
+            ):
+                with self.assertRaisesRegex(RuntimeError, "failed for all configured models"):
+                    run_review(workspace, "story-1", 1, config)
+
+            self.assertEqual(
+                {
+                    path.name: path.read_bytes()
+                    for path in current.iterdir()
+                    if path.is_file() and path.name.startswith(("standard.", "series.", "special."))
+                },
+                before,
+            )
+            with self.assertRaisesRegex(RuntimeError, "no valid current reviewer reports"):
+                rebuild_review_gate(workspace, "story-1", 1)
 
 
 if __name__ == "__main__":

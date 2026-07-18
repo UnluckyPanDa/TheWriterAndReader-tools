@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, Callable
 
 from shared.lib.codex_cli_runner import run_codex_cli_model
 from shared.lib.config_loader import (
@@ -158,82 +158,195 @@ def attempt_model_chain(
     attempts: list[dict[str, Any]] = []
 
     for model_profile in model_chain:
-        profile_name = str(model_profile.get("profile_name", model_profile.get("model", "unknown")))
-        provider_name = str(model_profile.get("provider", ""))
-        provider_config = model_profile.get("provider_config", {})
-        provider_type = provider_config.get("type") if isinstance(provider_config, dict) else None
-
-        if not isinstance(provider_config, dict) or not provider_config.get("enabled", False):
-            result = {"ok": False, "text": "", "reason": "provider_disabled"}
-        elif provider_type == "mock" or provider_name == "mock":
-            if config.get("allow_mock", False):
-                result = {"ok": True, "text": _mock_response(prompt), "reason": None}
-            else:
-                result = {"ok": False, "text": "", "reason": "mock_provider_disabled"}
-        elif provider_type == "local_cli":
-            result = run_local_cli_model(provider_config, model_profile, prompt, options)
-        elif provider_type == "codex_cli":
-            result = run_codex_cli_model(provider_config, model_profile, prompt, options)
-        elif provider_type == "online_openai_compatible":
-            result = run_online_api_model(provider_config, model_profile, prompt, options)
-        else:
-            result = {"ok": False, "text": "", "reason": f"unsupported_provider_type: {provider_type}"}
-
-        attempt = {
-            "model_profile": profile_name,
-            "provider": provider_name,
-            "provider_type": provider_type,
-            "status": "success" if result.get("ok") else "failed",
-            "reason": result.get("reason"),
-        }
-        for key in (
-            "model",
-            "reasoning_effort",
-            "codex_profile",
-            "capability",
-            "orchestration",
-            "requested_intelligence",
-            "resolved_intelligence",
-            "session",
-            "usage",
-        ):
-            if key in result:
-                attempt[key] = result[key]
-            elif key in model_profile:
-                attempt[key] = model_profile[key]
+        result, attempt = _attempt_model_profile(prompt, model_profile, config, options)
         attempts.append(attempt)
         if result.get("ok"):
-            success = {
-                "ok": True,
-                "text": str(result.get("text", "")),
-                "model_profile": profile_name,
-                "provider": provider_name,
-                "provider_type": provider_type,
-                "attempts": attempts,
-            }
-            for key in (
-                "model",
-                "reasoning_effort",
-                "codex_profile",
-                "capability",
-                "orchestration",
-                "requested_intelligence",
-                "resolved_intelligence",
-                "session",
-                "usage",
-            ):
-                if key in result:
-                    success[key] = result[key]
-                elif key in model_profile:
-                    success[key] = model_profile[key]
-            return success
+            return _success_result(result, model_profile, attempts)
 
+    return {"ok": False, "text": "", "model_profile": None, "attempts": attempts}
+
+
+def _attempt_model_profile(
+    prompt: str,
+    model_profile: dict[str, Any],
+    config: dict[str, Any],
+    options: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    profile_name = str(model_profile.get("profile_name", model_profile.get("model", "unknown")))
+    provider_name = str(model_profile.get("provider", ""))
+    provider_config = model_profile.get("provider_config", {})
+    provider_type = provider_config.get("type") if isinstance(provider_config, dict) else None
+
+    if not isinstance(provider_config, dict) or not provider_config.get("enabled", False):
+        result = {"ok": False, "text": "", "reason": "provider_disabled"}
+    elif provider_type == "mock" or provider_name == "mock":
+        result = (
+            {"ok": True, "text": _mock_response(prompt), "reason": None}
+            if config.get("allow_mock", False)
+            else {"ok": False, "text": "", "reason": "mock_provider_disabled"}
+        )
+    elif provider_type == "local_cli":
+        result = run_local_cli_model(provider_config, model_profile, prompt, options)
+    elif provider_type == "codex_cli":
+        result = run_codex_cli_model(provider_config, model_profile, prompt, options)
+    elif provider_type == "online_openai_compatible":
+        result = run_online_api_model(provider_config, model_profile, prompt, options)
+    else:
+        result = {"ok": False, "text": "", "reason": f"unsupported_provider_type: {provider_type}"}
+
+    attempt = {
+        "model_profile": profile_name,
+        "provider": provider_name,
+        "provider_type": provider_type,
+        "status": "success" if result.get("ok") else "failed",
+        "reason": result.get("reason"),
+    }
+    _copy_result_metadata(attempt, result, model_profile)
+    return result, attempt
+
+
+def _copy_result_metadata(
+    target: dict[str, Any],
+    result: dict[str, Any],
+    model_profile: dict[str, Any],
+) -> None:
+    for key in (
+        "model",
+        "reasoning_effort",
+        "codex_profile",
+        "capability",
+        "orchestration",
+        "requested_intelligence",
+        "resolved_intelligence",
+        "session",
+        "usage",
+    ):
+        if key in result:
+            target[key] = result[key]
+        elif key in model_profile:
+            target[key] = model_profile[key]
+
+
+def _success_result(
+    result: dict[str, Any],
+    model_profile: dict[str, Any],
+    attempts: list[dict[str, Any]],
+    value: Any | None = None,
+) -> dict[str, Any]:
+    provider_config = model_profile.get("provider_config", {})
+    success = {
+        "ok": True,
+        "text": str(result.get("text", "")),
+        "model_profile": str(model_profile.get("profile_name", model_profile.get("model", "unknown"))),
+        "provider": str(model_profile.get("provider", "")),
+        "provider_type": provider_config.get("type") if isinstance(provider_config, dict) else None,
+        "attempts": attempts,
+    }
+    if value is not None:
+        success["value"] = value
+    _copy_result_metadata(success, result, model_profile)
+    return success
+
+
+def attempt_structured_model_chain(
+    prompt: str,
+    model_chain: list[dict[str, Any]],
+    config: dict[str, Any],
+    validator: Callable[[str], Any],
+    repair_prompt: Callable[[str, str], str],
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate initial and same-profile repair responses before fallback."""
+    router_options = {**(options or {}), "structured_output": True}
+    attempts: list[dict[str, Any]] = []
+    for model_profile in model_chain:
+        initial_result, initial_attempt = _attempt_model_profile(
+            prompt,
+            model_profile,
+            config,
+            router_options,
+        )
+        initial_attempt["phase"] = "initial"
+        if not initial_result.get("ok"):
+            attempts.append(initial_attempt)
+            continue
+        initial_text = str(initial_result.get("text", ""))
+        try:
+            value = validator(initial_text)
+        except (TypeError, ValueError) as exc:
+            initial_attempt.update(status="invalid", reason="validation_failed", validation_error=str(exc))
+            attempts.append(initial_attempt)
+        else:
+            attempts.append(initial_attempt)
+            return _success_result(initial_result, model_profile, attempts, value)
+
+        repaired_result, repaired_attempt = _attempt_model_profile(
+            repair_prompt(initial_text, str(initial_attempt["validation_error"])),
+            model_profile,
+            config,
+            router_options,
+        )
+        repaired_attempt["phase"] = "repair"
+        if not repaired_result.get("ok"):
+            attempts.append(repaired_attempt)
+            continue
+        repaired_text = str(repaired_result.get("text", ""))
+        try:
+            value = validator(repaired_text)
+        except (TypeError, ValueError) as exc:
+            repaired_attempt.update(status="invalid", reason="validation_failed", validation_error=str(exc))
+            attempts.append(repaired_attempt)
+            continue
+        attempts.append(repaired_attempt)
+        return _success_result(repaired_result, model_profile, attempts, value)
     return {"ok": False, "text": "", "model_profile": None, "attempts": attempts}
 
 
 def _mock_response(prompt: str) -> str:
     """Return deterministic text for tests and offline development."""
     lower = prompt.lower()
+    if "acceptancegroundingdecisionv1" in lower:
+        story_match = re.search(r"^story_id:\s*([^\s]+)$", prompt, re.MULTILINE)
+        chapter_match = re.search(r"^chapter:\s*(\d+)$", prompt, re.MULTILINE)
+        return json.dumps(
+            {
+                "schema_version": 1,
+                "story_id": story_match.group(1) if story_match else "story-1",
+                "chapter": int(chapter_match.group(1)) if chapter_match else 1,
+                "grounded": True,
+                "unsupported_claims": [],
+                "name_conflicts": [],
+                "thinking_trace_detected": False,
+            },
+            ensure_ascii=False,
+        )
+    if "acceptedcontinuityv1" in lower:
+        story_match = re.search(r"^story_id:\s*([^\s]+)$", prompt, re.MULTILINE)
+        chapter_match = re.search(r"^chapter:\s*(\d+)$", prompt, re.MULTILINE)
+        return json.dumps(
+            {
+                "schema_version": 1,
+                "story_id": story_match.group(1) if story_match else "story-1",
+                "chapter": int(chapter_match.group(1)) if chapter_match else 1,
+                "summary": {
+                    "events": ["The protagonist enters the active situation."],
+                    "decisions": ["The protagonist chooses action over hesitation."],
+                    "discoveries": [],
+                    "relationship_changes": [],
+                    "practical_state": ["The immediate goal is reached."],
+                    "unresolved_pressure": ["A larger question remains."],
+                },
+                "handover": {
+                    "ending_situation": ["The immediate goal is complete while a larger question remains."],
+                    "character_intentions": ["The protagonist intends to face the next consequence."],
+                    "relationship_state": [],
+                    "open_pressure": ["The larger question remains unresolved."],
+                    "reader_questions": ["What consequence follows the decision?"],
+                    "continuity_details": ["The protagonist chose action over hesitation."],
+                },
+            },
+            ensure_ascii=False,
+        )
     if "scene skeleton json" in lower:
         story_match = re.search(r"^story_id:\s*([^\s]+)$", prompt, re.MULTILINE)
         chapter_match = re.search(r"^chapter:\s*(\d+)$", prompt, re.MULTILINE)

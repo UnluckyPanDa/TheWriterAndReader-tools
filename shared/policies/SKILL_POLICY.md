@@ -2,13 +2,16 @@
 
 ## Core Rule
 
-Use one skill per tool area. Skills are entry points into this tools repo; they
-must not become story-specific prompt dumps.
+Use one unified `twr` skill as the install and initialization entry point. Keep
+workflow details in one-level references so only the relevant tool area loads.
+Existing tool-area skills remain compatibility entry points and must not become
+story-specific prompt dumps.
 
 Do not create one skill per reviewer, writer, model, role, story, or series.
 
 ## Approved Skills
 
+- twr
 - twr-writing-tool
 - twr-review-tool
 - twr-publish-tool
@@ -57,8 +60,10 @@ Each approved skill must point back to the reusable source of truth:
 
 ## Packaging Rules
 
-- Published skills in `.agents/skills/twr-*` should stay thin and command
-  oriented.
+- The published `.agents/skills/twr` package owns bootstrap and cross-device
+  initialization. Its workflow references should stay thin and command oriented.
+- Published compatibility skills in `.agents/skills/twr-*` should stay thin and
+  command oriented.
 - Do not copy story canon, generated packs, review outputs, drafts, chapters, or
   private workspace state into a reusable skill.
 - Do not bake a concrete model name into a skill. Use provider groups and model

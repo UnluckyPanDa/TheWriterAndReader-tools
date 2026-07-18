@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AcceptanceGroundingDecisionV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "story_id", "chapter", "grounded", "unsupported_claims", "name_conflicts", "thinking_trace_detected"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "story_id": {"type": "string", "minLength": 1},
+    "chapter": {"type": "integer", "minimum": 1},
+    "grounded": {"type": "boolean"},
+    "unsupported_claims": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "name_conflicts": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "thinking_trace_detected": {"type": "boolean"}
+  }
+}

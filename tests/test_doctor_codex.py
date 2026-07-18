@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import unittest
 from contextlib import redirect_stdout
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from cli.commands.doctor import main
 
@@ -76,6 +76,27 @@ class CodexDoctorTest(unittest.TestCase):
         self.assertEqual(validate_runtime.call_count, 2)
         self.assertIn("error: provider first: first issue", output)
         self.assertIn("error: provider second: second issue", output)
+
+    def test_ollama_doctor_checks_only_profiles_referenced_by_fallback_chains(self) -> None:
+        config = {
+            "providers": {
+                "ollama": {"type": "local_cli", "enabled": True, "command": "ollama"}
+            },
+            "model_profiles": {
+                "active": {"provider": "ollama", "model": "active-model"},
+                "orphan": {"provider": "ollama", "model": "orphan-model"},
+            },
+            "fallback_chains": {"local": ["active"]},
+        }
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"models": [{"model": "orphan-model"}]}
+        with patch("requests.get", return_value=response):
+            result, output = self.run_doctor(config)
+
+        self.assertEqual(result, 1)
+        self.assertIn("configured fallback-chain model is not installed: active-model", output)
+        self.assertNotIn("orphan-model is not installed", output)
 
 
 if __name__ == "__main__":

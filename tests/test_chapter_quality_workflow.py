@@ -153,10 +153,12 @@ class ChapterQualityWorkflowTests(unittest.TestCase):
                 assert_typed(json.loads(schema_path.read_text(encoding="utf-8")))
 
     def test_scene_planning_passes_structured_output_schemas_to_model_routes(self) -> None:
-        def model_result(prompt: str, *_args: object, **_kwargs: object) -> dict[str, object]:
-            return {"ok": True, "text": _mock_response(prompt), "attempts": []}
+        def model_result(prompt: str, *args: object, **_kwargs: object) -> dict[str, object]:
+            text = _mock_response(prompt)
+            validator = args[2]
+            return {"ok": True, "text": text, "value": validator(text), "attempts": []}
 
-        with patch("tools.writing.generate_draft.attempt_model_chain", side_effect=model_result) as attempt:
+        with patch("tools.writing.generate_draft.attempt_structured_model_chain", side_effect=model_result) as attempt:
             contract, _ = generate_scene_contract(
                 load_config_example(),
                 "story-1",
@@ -167,15 +169,15 @@ class ChapterQualityWorkflowTests(unittest.TestCase):
             generate_scene_skeleton(load_config_example(), "story-1", 1, contract, None)
 
         self.assertEqual(
-            attempt.call_args_list[0].args[3]["output_schema_path"],
+            attempt.call_args_list[0].args[5]["output_schema_path"],
             str(SCENE_CONTRACT_SCHEMA_PATH),
         )
-        self.assertIs(attempt.call_args_list[0].args[3]["structured_output"], True)
+        self.assertIs(attempt.call_args_list[0].args[5]["structured_output"], True)
         self.assertEqual(
-            attempt.call_args_list[1].args[3]["output_schema_path"],
+            attempt.call_args_list[1].args[5]["output_schema_path"],
             str(SCENE_SKELETON_SCHEMA_PATH),
         )
-        self.assertIs(attempt.call_args_list[1].args[3]["structured_output"], True)
+        self.assertIs(attempt.call_args_list[1].args[5]["structured_output"], True)
 
     def test_scene_skeleton_must_match_contract_order(self) -> None:
         skeleton = {
@@ -435,7 +437,7 @@ special_reviewers:
             story = workspace / "fixture_stories" / "story-1"
             run_review(str(workspace), "story-1", 1, str(config))
 
-            with patch("tools.review.run_review.attempt_model_chain", return_value={"ok": False, "attempts": []}):
+            with patch("tools.review.run_review.attempt_structured_model_chain", return_value={"ok": False, "attempts": []}):
                 with self.assertRaisesRegex(RuntimeError, "failed for all configured models"):
                     run_review(str(workspace), "story-1", 1, str(config))
 
@@ -453,7 +455,7 @@ special_reviewers:
             review_root = story / "reviews" / "chapter" / "001"
             before = {path.name: path.read_text(encoding="utf-8") for path in review_root.glob("*.json")}
 
-            from shared.lib.model_router import attempt_model_chain as real_attempt_model_chain
+            from shared.lib.model_router import attempt_structured_model_chain as real_attempt_model_chain
 
             call_count = 0
 
@@ -464,7 +466,7 @@ special_reviewers:
                     return real_attempt_model_chain(*args, **kwargs)
                 return {"ok": False, "attempts": []}
 
-            with patch("tools.review.run_review.attempt_model_chain", side_effect=partial_failure):
+            with patch("tools.review.run_review.attempt_structured_model_chain", side_effect=partial_failure):
                 with self.assertRaisesRegex(RuntimeError, "failed for all configured models"):
                     run_review(str(workspace), "story-1", 1, str(config))
 

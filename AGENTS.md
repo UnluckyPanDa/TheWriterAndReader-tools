@@ -30,7 +30,8 @@ result or authorize a broader action.
 - Writing and review tools may read canon for context; they must not edit canon.
 - Story-wizard and canon-editing operations must validate model routing and
   destination paths before writing.
-- Keep skills as thin workflow entry points, with one skill per tool area.
+- Keep skills as thin workflow entry points. Use the unified `twr` skill for new
+  installs and retain tool-area skills as compatibility entry points.
 - Preserve public interfaces unless the requested change requires an interface
   change.
 
@@ -69,6 +70,7 @@ changes and `node --test tests/prompt-assets.test.mjs` for prompt-asset changes.
 
 Use the matching skill when the request falls within its workflow:
 
+- `twr`: first-run setup and unified routing for new cross-device installs.
 - `twr-writing-tool`: draft generation, continuation, refinement, handoff, and
   accepted-draft promotion.
 - `twr-review-tool`: review packs, configured reviewers, review gates, and
@@ -79,3 +81,7 @@ Use the matching skill when the request falls within its workflow:
 
 Skills orchestrate the CLI and shared tooling; durable behavior belongs in the
 underlying implementation, policies, schemas, prompts, and tests.
+
+The unified `twr` skill owns first-run bootstrap and routes to the same durable
+tool implementations. Its references may separate writing, review, publish,
+and wizard instructions for progressive loading.
