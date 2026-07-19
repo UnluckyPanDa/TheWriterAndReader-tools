@@ -169,6 +169,26 @@ class ChapterQualityWorkflowTests(unittest.TestCase):
             self.assertIn("GROUNDED_ACCEPTED_SUMMARY", write_pack)
             self.assertNotIn("REVIEWER_INTERPRETATION", write_pack)
 
+    def test_next_chapter_prefers_chapter_handover_over_stale_global_handover(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            story = workspace / "fixture_stories" / "story-1"
+            handover = story / "handover"
+            handover.mkdir()
+            (handover / "chapter_001.md").write_text(
+                "CURRENT_CHAPTER_HANDOVER\n",
+                encoding="utf-8",
+            )
+            (story / "context" / "handover.md").write_text(
+                "STALE_GLOBAL_HANDOVER\n",
+                encoding="utf-8",
+            )
+
+            write_pack = build_write_pack(str(workspace), "story-1", 2).read_text(encoding="utf-8")
+
+            self.assertIn("CURRENT_CHAPTER_HANDOVER", write_pack)
+            self.assertNotIn("STALE_GLOBAL_HANDOVER", write_pack)
+
     def test_write_pack_uses_the_configured_writer_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = self.copy_workspace(temp_dir)

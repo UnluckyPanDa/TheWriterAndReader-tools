@@ -6,9 +6,9 @@ $DataRoot = if ($env:XDG_DATA_HOME) { $env:XDG_DATA_HOME } else { Join-Path $env
 $RuntimeDir = Join-Path $DataRoot "runtime"
 $PythonBin = Join-Path $RuntimeDir "Scripts\python.exe"
 $TwrBin = Join-Path $RuntimeDir "Scripts\twr.exe"
-$Marker = Join-Path $DataRoot "initialized-0.1.5"
-$Wheel = Join-Path $SkillDir "assets\the_writer_and_reader_tools-0.1.5-py3-none-any.whl"
-$ExpectedSha256 = "723dda6a2e2b0e623b20e1bb6c4273401ca5934ada72498510bb8cb5532d8f69"
+$Marker = Join-Path $DataRoot "initialized-0.1.6"
+$Wheel = Join-Path $SkillDir "assets\the_writer_and_reader_tools-0.1.6-py3-none-any.whl"
+$ExpectedSha256 = "c92b89e0f9d5054c6393d08cd70f6c783a2f9f4efd27323e2e4d15116e394c14"
 
 if ((Test-Path $Marker) -and (Test-Path $TwrBin)) { Write-Output $TwrBin; exit 0 }
 New-Item -ItemType Directory -Force -Path $DataRoot | Out-Null
