@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -57,7 +58,12 @@ def _source_files(story_path: Path, chapter: int) -> list[tuple[str, Path]]:
     for category, relative, pattern in SOURCE_GROUPS:
         root = story_path / relative
         if root.exists():
-            sources.extend((category, path) for path in sorted(root.rglob(pattern)) if path.is_file())
+            for path in sorted(root.rglob(pattern)):
+                if not path.is_file():
+                    continue
+                if category == "review" and path.parent == root / "chapter" / f"{chapter:03d}":
+                    continue
+                sources.append((category, path))
     chapter_root = story_path / "chapters"
     for path in sorted(chapter_root.glob("chapter_*.md")):
         match = re.search(r"chapter_(\d+)\.md$", path.name)
@@ -264,6 +270,7 @@ def analyze_draft(
         "schema_version": 1,
         "chapter": chapter,
         "draft": str(draft_path.relative_to(root)),
+        "draft_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
         "metrics": {
             "word_count": len(tokens),
             "paragraph_count": len(paragraphs),

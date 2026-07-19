@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import tempfile
@@ -52,6 +53,30 @@ class WritingDiagnosticsTests(unittest.TestCase):
             self.assertEqual(output.name, "chapter_001_writing_diagnostics.json")
             self.assertEqual(payload["chapter"], 1)
             self.assertIn("paragraph_functions", payload)
+            draft = (workspace / "fixture_stories" / "story-1" / "drafts" / "chapter_001.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertEqual(payload["draft_sha256"], hashlib.sha256(draft.encode("utf-8")).hexdigest())
+
+    def test_current_chapter_reviews_are_not_source_similarity_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            story = workspace / "fixture_stories" / "story-1"
+            phrase = "review quotation should not become a source reuse penalty"
+            draft = f"# Chapter 1\n\n{phrase}.\n"
+            (story / "drafts" / "chapter_001.md").write_text(draft, encoding="utf-8")
+            review_root = story / "reviews" / "chapter" / "001"
+            review_root.mkdir(parents=True, exist_ok=True)
+            (review_root / "standard.editor.md").write_text(phrase + "\n", encoding="utf-8")
+
+            result = analyze_draft(story, 1, exact_min_words=8, distinctive_min_words=5)
+
+            self.assertFalse(
+                any(
+                    flag["source"] == "reviews/chapter/001/standard.editor.md"
+                    for flag in result["flags"]["distinctive_source_phrases"]
+                )
+            )
 
     def test_configured_world_terms_are_exempt_from_source_similarity(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

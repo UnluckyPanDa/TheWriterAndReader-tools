@@ -76,13 +76,29 @@ def plan_scenes(
     return {"scene_contract": contract_path, "scene_skeleton": skeleton_path}
 
 
-def load_scene_plan(story_path: Path, story_id: str, chapter: int) -> tuple[dict[str, Any], dict[str, Any]]:
+def load_scene_plan(
+    story_path: Path,
+    story_id: str,
+    chapter: int,
+    write_pack: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     contract_path, skeleton_path = _plan_paths(story_path, chapter)
     if not contract_path.exists() or not skeleton_path.exists():
         raise FileNotFoundError("scene plan is missing; run `twr write plan-scene` first")
-    contract = parse_scene_contract(contract_path.read_text(encoding="utf-8"), story_id, chapter)
+    contract = parse_scene_contract(
+        contract_path.read_text(encoding="utf-8"),
+        story_id,
+        chapter,
+        write_pack,
+    )
     scene_ids = [str(scene["scene_id"]) for scene in contract["scenes"]]
-    skeleton = parse_scene_skeleton(skeleton_path.read_text(encoding="utf-8"), story_id, chapter, scene_ids)
+    skeleton = parse_scene_skeleton(
+        skeleton_path.read_text(encoding="utf-8"),
+        story_id,
+        chapter,
+        scene_ids,
+        contract,
+    )
     return contract, skeleton
 
 
@@ -96,7 +112,9 @@ def draft_scene(
 ) -> Path:
     """Draft one planned scene into the chapter scene-draft directory."""
     story_path = resolve_story_path(workspace_path, story_id)
-    contract, skeleton = load_scene_plan(story_path, story_id, chapter)
+    write_pack_path = build_write_pack(str(workspace_path), story_id, chapter)
+    write_pack = write_pack_path.read_text(encoding="utf-8")
+    contract, skeleton = load_scene_plan(story_path, story_id, chapter, write_pack)
     contract_by_id = {str(scene["scene_id"]): scene for scene in contract["scenes"]}
     skeleton_by_id = {str(scene["scene_id"]): scene for scene in skeleton["scenes"]}
     if scene_id not in contract_by_id:
@@ -105,8 +123,6 @@ def draft_scene(
     require_explicit_runtime_config(config, "scene drafting")
     story_yaml = load_story_yaml(story_path)
     language = story_language(story_yaml)
-    write_pack_path = build_write_pack(str(workspace_path), story_id, chapter)
-    write_pack = write_pack_path.read_text(encoding="utf-8")
     scene_index = [str(scene["scene_id"]) for scene in contract["scenes"]].index(scene_id)
     continuity = "This is the first scene in the chapter."
     if scene_index:
@@ -147,7 +163,9 @@ def draft_scene(
 def assemble_chapter(workspace_path: str | Path, story_id: str, chapter: int) -> Path:
     """Assemble every planned scene draft in contract order."""
     story_path = resolve_story_path(workspace_path, story_id)
-    contract, _ = load_scene_plan(story_path, story_id, chapter)
+    write_pack_path = build_write_pack(str(workspace_path), story_id, chapter)
+    write_pack = write_pack_path.read_text(encoding="utf-8")
+    contract, _ = load_scene_plan(story_path, story_id, chapter, write_pack)
     scene_root = story_path / "drafts" / f"chapter_{chapter:03d}_scenes"
     scene_texts: list[str] = []
     missing: list[str] = []

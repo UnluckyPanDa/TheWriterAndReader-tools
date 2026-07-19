@@ -442,6 +442,17 @@ def _mock_response(prompt: str) -> str:
         story_id = story_ids[-1] if story_ids else "story-1"
         chapters = re.findall(r"^chapter:\s*(\d+)$", prompt, re.MULTILINE)
         chapter = int(chapters[-1]) if chapters else 1
+        prior_section = re.search(
+            r"## Prior Required Issue Verification\n(.*?)\n\nFor every prior issue",
+            prompt,
+            re.DOTALL,
+        )
+        prior_issues = json.loads(prior_section.group(1)) if prior_section else []
+        resolution_notes = [
+            f"resolved_prior_issue:{issue['issue_id']}"
+            for issue in prior_issues
+            if isinstance(issue, dict) and isinstance(issue.get("issue_id"), str)
+        ]
         return json.dumps(
             {
                 "schema_version": 1,
@@ -463,7 +474,7 @@ def _mock_response(prompt: str) -> str:
                 "rewrite_recommendation": {"required": False, "scope": "none"},
                 "gate_recommendation": "accept",
                 "carry_forward_tasks": [],
-                "reviewer_notes": ["Mock review completed."],
+                "reviewer_notes": ["Mock review completed.", *resolution_notes],
             },
             ensure_ascii=False,
         )

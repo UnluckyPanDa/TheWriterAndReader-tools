@@ -104,6 +104,8 @@ chapter: {chapter}
 - Every scene needs a unique scene_id, viewpoint_character, starting_state, immediate_goal, pressure, opposition, change_axes, required_change, new_information, physical_setting, active_characters, required_beats, forbidden_reveals, and ending_turn.
 - change_axes may contain only: knowledge, emotion, relationship, practical_situation, danger, intention, mystery, access, commitment, reader_expectation.
 - Every scene must change at least one axis and end in a materially different state.
+- Every named character, organization, location, object code, timestamp, and chapter reference must already appear in the Write Pack. Do not import remembered elements from another story or chapter.
+- Generic unnamed objects may support an existing required beat; they must not introduce a new plot mechanism.
 - Preserve canon and reveal timing. Treat supplied wording as reference, not prose to copy.
 - Do not include Markdown fences, commentary, or draft prose.
 
@@ -114,6 +116,7 @@ Return only the Scene Contract JSON.
 def _scene_contract_repair_prompt(
     story_id: str,
     chapter: int,
+    write_pack: str,
     invalid_text: str,
     validation_error: str,
 ) -> str:
@@ -122,6 +125,9 @@ def _scene_contract_repair_prompt(
 story_id: {story_id}
 chapter: {chapter}
 validation_error: {validation_error}
+
+## Active Write Pack
+{write_pack}
 
 ## Invalid Output
 {invalid_text}
@@ -150,6 +156,7 @@ chapter: {chapter}
 - Every scene needs purpose, entry_condition, action_sequence, conflict_escalation, emotional_turns, and exit_condition.
 - Use concrete actions, reactions, interruptions, choices, and consequences.
 - Make each action cause the next pressure or response.
+- Use only characters, locations, object codes, timestamps, chapter references, and plot facts already present in the validated contract.
 - Preserve canon, required beats, required changes, and forbidden reveals.
 - Do not write polished prose, dialogue, commentary, or Markdown fences.
 
@@ -409,8 +416,14 @@ def generate_scene_contract(
         build_scene_contract_prompt(story_id, chapter, write_pack),
         chain,
         config,
-        lambda text: parse_scene_contract(text, story_id, chapter),
-        lambda text, error: _scene_contract_repair_prompt(story_id, chapter, text, error),
+        lambda text: parse_scene_contract(text, story_id, chapter, write_pack),
+        lambda text, error: _scene_contract_repair_prompt(
+            story_id,
+            chapter,
+            write_pack,
+            text,
+            error,
+        ),
         router_options,
     )
     if not result.get("ok"):
@@ -437,7 +450,13 @@ def generate_scene_skeleton(
         build_scene_skeleton_prompt(story_id, chapter, scene_contract),
         chain,
         config,
-        lambda text: parse_scene_skeleton(text, story_id, chapter, scene_ids),
+        lambda text: parse_scene_skeleton(
+            text,
+            story_id,
+            chapter,
+            scene_ids,
+            scene_contract,
+        ),
         lambda text, error: _scene_skeleton_repair_prompt(
             story_id,
             chapter,
@@ -450,6 +469,32 @@ def generate_scene_skeleton(
     if not result.get("ok"):
         raise RuntimeError(f"scene skeleton planning failed for all configured models: {result.get('attempts', [])}")
     return result["value"], result
+
+
+def _write_generation_failure(
+    story_path: Path,
+    chapter: int,
+    config: dict[str, Any],
+    run_id: str,
+    stage: str,
+    error: Exception | str,
+    result: dict[str, Any] | None = None,
+) -> None:
+    """Persist a failed stage so another device can diagnose the handoff."""
+    write_run_provenance(
+        story_path,
+        chapter,
+        "generation",
+        result or {"model_profile": None, "attempts": []},
+        config,
+        {},
+        {
+            "run_id": run_id,
+            "status": "failed",
+            "failed_stage": stage,
+            "error": str(error),
+        },
+    )
 
 
 def generate_draft(
@@ -466,8 +511,23 @@ def generate_draft(
     require_explicit_runtime_config(config, "chapter generation")
     write_pack_path = build_write_pack(str(workspace_path), story_id, chapter)
     write_pack = write_pack_path.read_text(encoding="utf-8")
-    scene_contract, planning_result = generate_scene_contract(config, story_id, chapter, write_pack, options)
-    scene_skeleton, skeleton_result = generate_scene_skeleton(config, story_id, chapter, scene_contract, options)
+    run_id = str(uuid4())
+    try:
+        scene_contract, planning_result = generate_scene_contract(config, story_id, chapter, write_pack, options)
+    except Exception as exc:
+        _write_generation_failure(story_path, chapter, config, run_id, "scene_planning", exc)
+        raise
+    try:
+        scene_skeleton, skeleton_result = generate_scene_skeleton(
+            config,
+            story_id,
+            chapter,
+            scene_contract,
+            options,
+        )
+    except Exception as exc:
+        _write_generation_failure(story_path, chapter, config, run_id, "scene_skeleton", exc)
+        raise
     language = story_language(story_yaml)
     heading = chapter_heading(chapter, language)
     accepted_entry = "No previous accepted chapter is available."
@@ -498,9 +558,19 @@ def generate_draft(
             {**(options or {}), "progress_label": f"scene draft {scene_id}"},
         )
         if not result.get("ok"):
-            raise RuntimeError(
+            error = RuntimeError(
                 f"scene draft {scene_id} failed for all configured models: {result.get('attempts', [])}"
             )
+            _write_generation_failure(
+                story_path,
+                chapter,
+                config,
+                run_id,
+                f"scene_draft:{scene_id}",
+                error,
+                result,
+            )
+            raise error
         scene_text = _normalize_scene_draft(str(result.get("text", "")))
         scene_results.append(result)
         scene_drafts.append((scene_id, scene_text))
@@ -517,9 +587,19 @@ def generate_draft(
         {**(options or {}), "progress_label": "narrative deepening"},
     )
     if not deepening_result.get("ok"):
-        raise RuntimeError(
+        error = RuntimeError(
             f"narrative deepening failed for all configured models: {deepening_result.get('attempts', [])}"
         )
+        _write_generation_failure(
+            story_path,
+            chapter,
+            config,
+            run_id,
+            "narrative_deepening",
+            error,
+            deepening_result,
+        )
+        raise error
     deepened_draft = normalize_generated_draft(str(deepening_result.get("text", "")), heading)
     compression_chain = select_model_for_stage(config, "de_duplication", fallback_stage="chapter_generation")
     compression_result = attempt_model_chain(
@@ -529,9 +609,19 @@ def generate_draft(
         {**(options or {}), "progress_label": "compression and de-duplication"},
     )
     if not compression_result.get("ok"):
-        raise RuntimeError(
+        error = RuntimeError(
             f"compression and de-duplication failed for all configured models: {compression_result.get('attempts', [])}"
         )
+        _write_generation_failure(
+            story_path,
+            chapter,
+            config,
+            run_id,
+            "de_duplication",
+            error,
+            compression_result,
+        )
+        raise error
     compressed_draft = normalize_generated_draft(str(compression_result.get("text", "")), heading)
     polish_chain = select_model_for_stage(config, "prose_polish", fallback_stage="chapter_generation")
     polish_result = attempt_model_chain(
@@ -550,9 +640,18 @@ def generate_draft(
     )
     if not polish_result.get("ok"):
         attempts = polish_result.get("attempts", [])
-        raise RuntimeError(f"prose polish failed for all configured models: {attempts}")
+        error = RuntimeError(f"prose polish failed for all configured models: {attempts}")
+        _write_generation_failure(
+            story_path,
+            chapter,
+            config,
+            run_id,
+            "prose_polish",
+            error,
+            polish_result,
+        )
+        raise error
     draft_text = normalize_generated_draft(str(polish_result.get("text", "")), heading)
-    run_id = str(uuid4())
     run_path = story_path / "runs" / f"chapter_{chapter:03d}" / run_id
     contract_path = run_path / "scene_contract.json"
     skeleton_path = run_path / "scene_skeleton.json"

@@ -9,7 +9,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from shared.lib.scene_contract import _json_text
+from shared.lib.scene_contract import _json_text, unsupported_planning_anchors
 
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas" / "scene_skeleton.schema.json"
@@ -27,6 +27,7 @@ def parse_scene_skeleton(
     story_id: str,
     chapter: int,
     scene_ids: list[str],
+    scene_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a validated scene skeleton or raise a concise ValueError."""
     try:
@@ -58,4 +59,17 @@ def parse_scene_skeleton(
         for field in ("action_sequence", "conflict_escalation", "emotional_turns"):
             if any(not value.strip() for value in scene[field]):
                 raise ValueError(f"scene skeleton scenes.{index}.{field} cannot contain blank values")
+    if scene_contract is not None:
+        unsupported = unsupported_planning_anchors(
+            [
+                {key: value for key, value in scene.items() if key != "scene_id"}
+                for scene in data["scenes"]
+            ],
+            json.dumps(scene_contract, ensure_ascii=False),
+        )
+        if unsupported:
+            raise ValueError(
+                "scene skeleton contains unsupported planning anchors: "
+                + ", ".join(unsupported[:12])
+            )
     return data

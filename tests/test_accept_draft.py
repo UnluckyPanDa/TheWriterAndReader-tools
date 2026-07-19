@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import tempfile
@@ -7,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from shared.lib.revision_evidence import build_revision_receipt, revision_receipt_path
 from tools.review.run_review import rebuild_review_gate, run_review
 from tools.writing.accept_draft import accept_draft
 
@@ -98,7 +100,77 @@ class AcceptDraftTests(unittest.TestCase):
                 {path: path.read_bytes() if path.exists() else None for path in watched},
                 before,
             )
-            self.assertFalse((story / "runs" / "chapter_001_acceptance.json").exists())
+            failure = json.loads((story / "runs" / "chapter_001_acceptance.json").read_text(encoding="utf-8"))
+            self.assertEqual(failure["status"], "failed")
+            self.assertEqual(failure["failed_stage"], "acceptance_grounding_recheck")
+
+    def test_accept_rejects_a_handwritten_gate_without_quality_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            story = workspace / "fixture_stories" / "story-1"
+            draft = (story / "drafts" / "chapter_001.md").read_text(encoding="utf-8")
+            draft_hash = hashlib.sha256(draft.encode("utf-8")).hexdigest()
+            gate = story / "reviews" / "chapter" / "001" / "review_gate_status.md"
+            gate.parent.mkdir(parents=True, exist_ok=True)
+            gate.write_text(
+                "# Review Gate\n\n"
+                "run_state: complete\n"
+                "status: accepted_with_notes\n"
+                f"draft_sha256: {draft_hash}\n"
+                "review_mode: manual_fallback\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "correctness evidence"):
+                accept_draft(workspace, "story-1", 1, str(FIXTURES / "mock_config.yaml"))
+
+    def test_accept_requires_current_canonical_reviewer_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            story = workspace / "fixture_stories" / "story-1"
+            config = str(FIXTURES / "mock_config.yaml")
+            run_review(workspace, "story-1", 1, config)
+            (story / "reviews" / "chapter" / "001" / "standard.editor.json").unlink()
+
+            with self.assertRaisesRegex(RuntimeError, "canonical review record is missing: standard.editor"):
+                accept_draft(workspace, "story-1", 1, config)
+
+    def test_accept_rejects_a_claimed_resolution_without_reviewer_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            story = workspace / "fixture_stories" / "story-1"
+            config = str(FIXTURES / "mock_config.yaml")
+            outputs = run_review(workspace, "story-1", 1, config)
+            draft_hash = hashlib.sha256(
+                (story / "drafts" / "chapter_001.md").read_bytes()
+            ).hexdigest()
+            receipt = build_revision_receipt(
+                "story-1",
+                1,
+                "revision-run",
+                "a" * 64,
+                draft_hash,
+                [
+                    {
+                        "key": "standard.editor:R001",
+                        "reviewer": {"id": "editor", "type": "standard"},
+                        "issue_id": "R001",
+                    }
+                ],
+            )
+            receipt_path = revision_receipt_path(story, 1)
+            receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+            gate_path = outputs["review_gate"]
+            gate_path.write_text(
+                gate_path.read_text(encoding="utf-8").replace(
+                    "revision_resolution_status: not_required",
+                    "revision_resolution_status: pass",
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "resolution does not match"):
+                accept_draft(workspace, "story-1", 1, config)
 
     def test_failed_reviewer_preserves_current_records_but_blocks_stale_gate_rebuild(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

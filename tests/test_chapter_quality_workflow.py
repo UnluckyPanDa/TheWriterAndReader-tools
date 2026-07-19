@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import tempfile
@@ -90,6 +91,84 @@ class ChapterQualityWorkflowTests(unittest.TestCase):
             self.assertNotIn("UNACCEPTED_STYLE_PHRASE", prompt)
             self.assertIn("- Chapter: 2", prompt)
 
+    def test_next_chapter_stops_when_prior_accepted_prose_diverges_from_reviewed_draft(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            story = workspace / "fixture_stories" / "story-1"
+            draft_path = story / "drafts" / "chapter_001.md"
+            draft_hash = hashlib.sha256(draft_path.read_bytes()).hexdigest()
+            gate = story / "reviews" / "chapter" / "001" / "review_gate_status.md"
+            gate.parent.mkdir(parents=True)
+            gate.write_text(
+                "# Review Gate\n\n"
+                "run_state: complete\n"
+                "status: accepted\n"
+                f"draft_sha256: {draft_hash}\n",
+                encoding="utf-8",
+            )
+            provenance = story / "runs" / "chapter_001_acceptance.json"
+            provenance.parent.mkdir()
+            provenance.write_text(
+                json.dumps(
+                    {
+                        "operation": "acceptance",
+                        "chapter": 1,
+                        "source": "drafts/chapter_001.md",
+                        "draft_sha256": draft_hash,
+                        "grounding": {"grounded": True},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "cannot continue to chapter 2.*accepted prose does not match the reviewed draft",
+            ):
+                build_write_pack(str(workspace), "story-1", 2)
+
+    def test_next_chapter_prefers_the_grounded_accepted_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            story = workspace / "fixture_stories" / "story-1"
+            accepted = story / "chapters" / "chapter_001.md"
+            draft = story / "drafts" / "chapter_001.md"
+            accepted.write_bytes(draft.read_bytes())
+            draft_hash = hashlib.sha256(draft.read_bytes()).hexdigest()
+            gate = story / "reviews" / "chapter" / "001" / "review_gate_status.md"
+            gate.parent.mkdir(parents=True)
+            gate.write_text(
+                "# Review Gate\n\n"
+                "run_state: complete\n"
+                "status: accepted\n"
+                f"draft_sha256: {draft_hash}\n",
+                encoding="utf-8",
+            )
+            provenance = story / "runs" / "chapter_001_acceptance.json"
+            provenance.parent.mkdir()
+            provenance.write_text(
+                json.dumps(
+                    {
+                        "operation": "acceptance",
+                        "chapter": 1,
+                        "source": "drafts/chapter_001.md",
+                        "draft_sha256": draft_hash,
+                        "grounding": {"grounded": True},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            summaries = story / "summaries"
+            summaries.mkdir()
+            (summaries / "summary_chapter_001.md").write_text("GROUNDED_ACCEPTED_SUMMARY\n", encoding="utf-8")
+            review_summary = story / "reviews" / "chapter" / "001" / "review_task_summary.md"
+            review_summary.write_text("REVIEWER_INTERPRETATION\n", encoding="utf-8")
+
+            write_pack = build_write_pack(str(workspace), "story-1", 2).read_text(encoding="utf-8")
+
+            self.assertIn("GROUNDED_ACCEPTED_SUMMARY", write_pack)
+            self.assertNotIn("REVIEWER_INTERPRETATION", write_pack)
+
     def test_write_pack_uses_the_configured_writer_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = self.copy_workspace(temp_dir)
@@ -136,6 +215,32 @@ class ChapterQualityWorkflowTests(unittest.TestCase):
         valid["scenes"][0]["change_axes"] = []
         with self.assertRaisesRegex(ValueError, "invalid scene contract"):
             parse_scene_contract(json.dumps(valid), "story-1", 1)
+
+    def test_scene_contract_rejects_story_contamination_absent_from_write_pack(self) -> None:
+        contract = json.loads(
+            _mock_response("scene contract JSON\nstory_id: story-1\nchapter: 1\n")
+        )
+        write_pack = "The protagonist acts in the active chapter location and accepts a practical cost."
+        self.assertEqual(
+            parse_scene_contract(json.dumps(contract), "story-1", 1, write_pack),
+            contract,
+        )
+        contaminated = json.loads(json.dumps(contract))
+        contaminated["scenes"][0]["active_characters"].append("Mishima")
+        contaminated["scenes"][0]["required_beats"] = [
+            "Mishima opens B2-07 during Chapter 19 updates."
+        ]
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "unsupported planning anchors.*character:Mishima.*anchor:B2-07",
+        ):
+            parse_scene_contract(
+                json.dumps(contaminated),
+                "story-1",
+                1,
+                write_pack,
+            )
 
     def test_scene_planning_schemas_are_compatible_with_codex_structured_output(self) -> None:
         def assert_typed(node: object, path: str = "$") -> None:
@@ -201,6 +306,27 @@ class ChapterQualityWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must match the scene contract in order"):
             parse_scene_skeleton(json.dumps(skeleton), "story-1", 1, ["scene-2"])
 
+    def test_scene_skeleton_rejects_anchors_absent_from_validated_contract(self) -> None:
+        contract = json.loads(
+            _mock_response("scene contract JSON\nstory_id: story-1\nchapter: 1\n")
+        )
+        skeleton = json.loads(
+            _mock_response(
+                "scene skeleton JSON\nstory_id: story-1\nchapter: 1\n"
+                + json.dumps(contract)
+            )
+        )
+        skeleton["scenes"][0]["action_sequence"] = ["The protagonist opens M-07."]
+
+        with self.assertRaisesRegex(ValueError, "unsupported planning anchors.*M-07"):
+            parse_scene_skeleton(
+                json.dumps(skeleton),
+                "story-1",
+                1,
+                ["scene-1"],
+                contract,
+            )
+
     def test_polish_prompt_forbids_plot_changes(self) -> None:
         prompt = build_polish_prompt(
             "story-1",
@@ -222,6 +348,23 @@ class ChapterQualityWorkflowTests(unittest.TestCase):
 
             with self.assertRaisesRegex(RuntimeError, "requires an explicit runtime config"):
                 generate_draft(str(workspace), "story-1", 1, str(missing_config))
+
+    def test_failed_generation_stage_writes_durable_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = self.copy_workspace(temp_dir)
+            story = workspace / "fixture_stories" / "story-1"
+
+            with patch(
+                "tools.writing.generate_draft.generate_scene_contract",
+                side_effect=RuntimeError("local writer timed out before fallback completed"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "timed out"):
+                    generate_draft(str(workspace), "story-1", 1, str(FIXTURES / "mock_config.yaml"))
+
+            provenance = json.loads((story / "runs" / "chapter_001_generation.json").read_text(encoding="utf-8"))
+            self.assertEqual(provenance["status"], "failed")
+            self.assertEqual(provenance["failed_stage"], "scene_planning")
+            self.assertIn("timed out", provenance["error"])
 
     def test_review_parser_does_not_accept_a_report_without_evidence(self) -> None:
         self.assertEqual(recommended_gate_status("status: pass\ngate_status: accept\n"), "blocked")
@@ -445,6 +588,9 @@ special_reviewers:
             gate_text = gate.read_text(encoding="utf-8")
             self.assertIn("run_state: failed", gate_text)
             self.assertIn("status: blocked", gate_text)
+            provenance = json.loads((story / "runs" / "chapter_001_review.json").read_text(encoding="utf-8"))
+            self.assertEqual(provenance["status"], "failed")
+            self.assertIn("failed for all configured models", provenance["error"])
 
     def test_partial_failed_rerun_does_not_promote_mixed_current_records(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
