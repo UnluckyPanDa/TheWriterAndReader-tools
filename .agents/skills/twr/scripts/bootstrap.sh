@@ -6,9 +6,9 @@ TWR_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/the-writer-and-reader"
 RUNTIME_DIR="$TWR_DATA_DIR/runtime"
 PYTHON_BIN="$RUNTIME_DIR/bin/python"
 TWR_BIN="$RUNTIME_DIR/bin/twr"
-MARKER="$TWR_DATA_DIR/initialized-0.1.0"
-WHEEL="$SKILL_DIR/assets/the_writer_and_reader_tools-0.1.0-py3-none-any.whl"
-EXPECTED_SHA256="21de0c294177a02f9e17fcc569ce28d9b89b94048c600453167ec715d6aeae60"
+MARKER="$TWR_DATA_DIR/initialized-0.1.5"
+WHEEL="$SKILL_DIR/assets/the_writer_and_reader_tools-0.1.5-py3-none-any.whl"
+EXPECTED_SHA256="723dda6a2e2b0e623b20e1bb6c4273401ca5934ada72498510bb8cb5532d8f69"
 
 if [[ -f "$MARKER" && -x "$TWR_BIN" ]]; then
   printf '%s\n' "$TWR_BIN"
@@ -38,10 +38,8 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   fi
 fi
 
-if [[ ! -x "$TWR_BIN" ]]; then
-  "$PYTHON_BIN" -m ensurepip --upgrade >/dev/null 2>&1 || true
-  "$PYTHON_BIN" -m pip install --upgrade "$WHEEL"
-fi
+"$PYTHON_BIN" -m ensurepip --upgrade >/dev/null 2>&1 || true
+"$PYTHON_BIN" -m pip install --upgrade "$WHEEL"
 
 "$TWR_BIN" setup --ensure
 touch "$MARKER"

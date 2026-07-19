@@ -75,6 +75,21 @@ If `twr` is not on `PATH`, report that the shared CLI is not installed or not on
 - Never guess the story path.
 - Never repeatedly reject the same reviewer issue.
 - If reviewer rejects a writer explanation, rewrite is required.
+- A revision command must select generated revision prose, then diagnostics and
+  all required reviewers must rerun against its new hash before acceptance.
+- Preserve the revision issue receipt and require originating reviewers to
+  explicitly clear every prior rewrite-required issue ID on the revised prose.
+- Do not turn failed model or manual review notes into an accepted gate.
+
+## Cross-device handoff
+
+- Keep one device as the writer for an active chapter.
+- Handoff only through a scoped pushed commit. Report branch, commit, story,
+  chapter, draft SHA-256, gate status, run id, and next action.
+- The receiving device must use a clean tree, fast-forward to that commit,
+  verify the hash, reload state/handover/instruction, and regenerate packs.
+- Recheck external config, local models, loopback access, and Codex runtime on
+  every receiving host; these are host-local.
 
 ## Commands
 

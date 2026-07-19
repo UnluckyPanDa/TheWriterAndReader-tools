@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from cli.twr import main as cli_main
 from shared.lib.local_cli_runner import run_local_cli_model
-from shared.lib.model_router import attempt_structured_model_chain
+from shared.lib.model_router import attempt_model_chain, attempt_structured_model_chain
 
 
 class LocalOllamaTransportTests(unittest.TestCase):
@@ -50,6 +53,31 @@ class LocalOllamaTransportTests(unittest.TestCase):
 
 
 class StructuredFallbackTests(unittest.TestCase):
+    def test_model_chain_reports_progress_without_changing_result(self) -> None:
+        messages: list[str] = []
+        profile = {
+            "profile_name": "mock_writer",
+            "provider": "mock",
+            "provider_config": {"type": "mock", "enabled": True},
+            "model": "mock-writer",
+        }
+
+        result = attempt_model_chain(
+            "Write prose.",
+            [profile],
+            {"allow_mock": True},
+            {"progress_callback": messages.append, "progress_label": "scene draft scene-1"},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            messages,
+            [
+                "scene draft scene-1: trying mock_writer",
+                "scene draft scene-1: mock_writer completed",
+            ],
+        )
+
     def test_each_model_gets_one_repair_before_fallback(self) -> None:
         provider = {"type": "local_cli", "enabled": True, "command": "ollama"}
         chain = [
@@ -83,6 +111,39 @@ class StructuredFallbackTests(unittest.TestCase):
         self.assertEqual([item["phase"] for item in result["attempts"]], ["initial", "repair", "initial"])
         self.assertEqual([item["status"] for item in result["attempts"]], ["invalid", "invalid", "success"])
         self.assertEqual(runner.call_count, 3)
+
+
+class WritingCliProgressTests(unittest.TestCase):
+    def test_draft_progress_uses_stderr_and_keeps_path_on_stdout(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        def fake_generate(*args: object) -> Path:
+            options = args[4]
+            options["progress_callback"]("scene contract: trying local_writer")
+            return Path("/tmp/chapter_001.md")
+
+        with (
+            patch("tools.writing.generate_draft.generate_draft", side_effect=fake_generate),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            result = cli_main(
+                [
+                    "write",
+                    "draft",
+                    "--workspace",
+                    "/tmp/workspace",
+                    "--story",
+                    "story-1",
+                    "--chapter",
+                    "1",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(stdout.getvalue(), "/tmp/chapter_001.md\n")
+        self.assertEqual(stderr.getvalue(), "[twr] scene contract: trying local_writer\n")
 
 
 if __name__ == "__main__":

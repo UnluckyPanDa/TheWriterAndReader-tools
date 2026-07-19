@@ -158,12 +158,30 @@ def attempt_model_chain(
     attempts: list[dict[str, Any]] = []
 
     for model_profile in model_chain:
+        profile_name = str(model_profile.get("profile_name", model_profile.get("model", "unknown")))
+        _notify_progress(options, f"{_progress_label(options)}: trying {profile_name}")
         result, attempt = _attempt_model_profile(prompt, model_profile, config, options)
         attempts.append(attempt)
         if result.get("ok"):
+            _notify_progress(options, f"{_progress_label(options)}: {profile_name} completed")
             return _success_result(result, model_profile, attempts)
+        _notify_progress(
+            options,
+            f"{_progress_label(options)}: {profile_name} failed ({result.get('reason') or 'unknown error'})",
+        )
 
     return {"ok": False, "text": "", "model_profile": None, "attempts": attempts}
+
+
+def _progress_label(options: dict[str, Any]) -> str:
+    label = options.get("progress_label", "model generation")
+    return str(label).strip() or "model generation"
+
+
+def _notify_progress(options: dict[str, Any], message: str) -> None:
+    callback = options.get("progress_callback")
+    if callable(callback):
+        callback(message)
 
 
 def _attempt_model_profile(
@@ -260,6 +278,9 @@ def attempt_structured_model_chain(
     router_options = {**(options or {}), "structured_output": True}
     attempts: list[dict[str, Any]] = []
     for model_profile in model_chain:
+        profile_name = str(model_profile.get("profile_name", model_profile.get("model", "unknown")))
+        label = _progress_label(router_options)
+        _notify_progress(router_options, f"{label}: trying {profile_name}")
         initial_result, initial_attempt = _attempt_model_profile(
             prompt,
             model_profile,
@@ -269,6 +290,10 @@ def attempt_structured_model_chain(
         initial_attempt["phase"] = "initial"
         if not initial_result.get("ok"):
             attempts.append(initial_attempt)
+            _notify_progress(
+                router_options,
+                f"{label}: {profile_name} failed ({initial_result.get('reason') or 'unknown error'})",
+            )
             continue
         initial_text = str(initial_result.get("text", ""))
         try:
@@ -276,8 +301,10 @@ def attempt_structured_model_chain(
         except (TypeError, ValueError) as exc:
             initial_attempt.update(status="invalid", reason="validation_failed", validation_error=str(exc))
             attempts.append(initial_attempt)
+            _notify_progress(router_options, f"{label}: {profile_name} returned invalid output; repairing")
         else:
             attempts.append(initial_attempt)
+            _notify_progress(router_options, f"{label}: {profile_name} completed")
             return _success_result(initial_result, model_profile, attempts, value)
 
         repaired_result, repaired_attempt = _attempt_model_profile(
@@ -289,6 +316,10 @@ def attempt_structured_model_chain(
         repaired_attempt["phase"] = "repair"
         if not repaired_result.get("ok"):
             attempts.append(repaired_attempt)
+            _notify_progress(
+                router_options,
+                f"{label}: {profile_name} repair failed ({repaired_result.get('reason') or 'unknown error'})",
+            )
             continue
         repaired_text = str(repaired_result.get("text", ""))
         try:
@@ -296,8 +327,10 @@ def attempt_structured_model_chain(
         except (TypeError, ValueError) as exc:
             repaired_attempt.update(status="invalid", reason="validation_failed", validation_error=str(exc))
             attempts.append(repaired_attempt)
+            _notify_progress(router_options, f"{label}: {profile_name} repair remained invalid")
             continue
         attempts.append(repaired_attempt)
+        _notify_progress(router_options, f"{label}: {profile_name} repair completed")
         return _success_result(repaired_result, model_profile, attempts, value)
     return {"ok": False, "text": "", "model_profile": None, "attempts": attempts}
 
@@ -409,6 +442,17 @@ def _mock_response(prompt: str) -> str:
         story_id = story_ids[-1] if story_ids else "story-1"
         chapters = re.findall(r"^chapter:\s*(\d+)$", prompt, re.MULTILINE)
         chapter = int(chapters[-1]) if chapters else 1
+        prior_section = re.search(
+            r"## Prior Required Issue Verification\n(.*?)\n\nFor every prior issue",
+            prompt,
+            re.DOTALL,
+        )
+        prior_issues = json.loads(prior_section.group(1)) if prior_section else []
+        resolution_notes = [
+            f"resolved_prior_issue:{issue['issue_id']}"
+            for issue in prior_issues
+            if isinstance(issue, dict) and isinstance(issue.get("issue_id"), str)
+        ]
         return json.dumps(
             {
                 "schema_version": 1,
@@ -430,7 +474,7 @@ def _mock_response(prompt: str) -> str:
                 "rewrite_recommendation": {"required": False, "scope": "none"},
                 "gate_recommendation": "accept",
                 "carry_forward_tasks": [],
-                "reviewer_notes": ["Mock review completed."],
+                "reviewer_notes": ["Mock review completed.", *resolution_notes],
             },
             ensure_ascii=False,
         )

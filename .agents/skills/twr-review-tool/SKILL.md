@@ -80,6 +80,13 @@ If the re-review keeps the issue blocked, the writer must rewrite.
 - Never write outside the selected story folder.
 - Never silently disable a reviewer.
 - Never skip blocking reviewers unless config says disabled.
+- Preserve failed review provenance; do not manufacture an accepted manual
+  gate when the configured chain fails.
+- Required comments must be applied to revised prose and all required reviewers
+  must rerun against the new draft hash before acceptance.
+- Recheck every issue in the revision receipt. Keep unresolved issues under the
+  same ID; mark resolved issues with `resolved_prior_issue:<issue_id>` only when
+  current-draft evidence supports the resolution.
 
 ## Commands
 

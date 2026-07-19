@@ -14,6 +14,11 @@ from uuid import uuid4
 from shared.lib.config_loader import load_config
 from shared.lib.model_router import attempt_structured_model_chain, select_model_for_reviewer
 from shared.lib.path_rules import assert_story_write_allowed
+from shared.lib.revision_evidence import (
+    load_revision_receipt,
+    prior_issues_for_reviewer,
+    revision_resolution_status,
+)
 from shared.lib.review_parser import (
     REVIEW_DECISION_SCHEMA_PATH,
     parse_review_decision,
@@ -97,6 +102,7 @@ def _review_prompt(
     reviewer_config: dict[str, Any],
     profile: str,
     review_pack: str,
+    prior_required_issues: list[dict[str, Any]] | None = None,
 ) -> str:
     can_block = "yes" if reviewer_config.get("can_block_gate", True) else "no"
     contract = _render_report_template(story_id, chapter, layer, reviewer_id)
@@ -111,6 +117,14 @@ def _review_prompt(
 
 ## Review Pack
 {review_pack}
+
+## Prior Required Issue Verification
+{json.dumps(prior_required_issues or [], ensure_ascii=False, indent=2)}
+
+For every prior issue above, inspect the revised draft at the named location.
+- If resolved, add the exact reviewer_notes entry `resolved_prior_issue:<issue_id>`.
+- If still present, include it in issues with the same issue_id and rewrite_required true; do not add the resolved marker.
+- Never mark an issue resolved from the writer's claim alone. Use evidence from the current draft.
 
 ## Output Contract
 - Return only one JSON object matching ReviewDecisionV1 below.
@@ -483,10 +497,13 @@ def _correctness_status(review_rows: list[dict[str, Any]]) -> tuple[str, list[st
 def _novelness_status(
     review_rows: list[dict[str, Any]],
     diagnostics: dict[str, Any] | None = None,
+    draft_sha256: str | None = None,
 ) -> tuple[str, list[str]]:
     rows, missing = _required_rows(review_rows, REQUIRED_NOVELNESS)
     if missing:
         return "incomplete", missing
+    if draft_sha256 and (diagnostics or {}).get("draft_sha256") != draft_sha256:
+        return "incomplete", ["current_draft_diagnostics"]
     if any(row["counts"]["blocker"] or row["decision"] == "blocked" for row in rows):
         return "chapter_rewrite", []
     scopes = {str(row["rewrite_scope"]) for row in rows if row["decision"] == "revision_recommended" or row["counts"]["major"]}
@@ -511,6 +528,7 @@ def _write_novelness_gate(
     missing: list[str],
     review_rows: list[dict[str, Any]],
     diagnostics: dict[str, Any] | None = None,
+    draft_sha256: str = "missing",
 ) -> Path:
     sources = [
         f"standard.{row['reviewer_id']}"
@@ -520,6 +538,8 @@ def _write_novelness_gate(
     content = f"""# Chapter {chapter:03d} Novelness Gate
 
 status: {status}
+draft_sha256: {draft_sha256}
+diagnostics_draft_sha256: {(diagnostics or {}).get('draft_sha256', 'missing')}
 required_reviewers: {', '.join(sorted(REQUIRED_NOVELNESS))}
 source_reports: {', '.join(sources) or 'none'}
 missing_reviewers: {', '.join(missing) or 'none'}
@@ -553,8 +573,17 @@ def run_novelness_gate(workspace_path: str | Path, story_id: str, chapter: int) 
             rows.append(current[1])
     diagnostics_path = story_path / "context" / f"chapter_{chapter:03d}_writing_diagnostics.json"
     diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8")) if diagnostics_path.exists() else {}
-    status, missing = _novelness_status(rows, diagnostics)
-    return _write_novelness_gate(story_path, chapter, status, missing, rows, diagnostics)
+    draft_sha256 = _draft_hash(story_path, chapter)
+    status, missing = _novelness_status(rows, diagnostics, draft_sha256)
+    return _write_novelness_gate(
+        story_path,
+        chapter,
+        status,
+        missing,
+        rows,
+        diagnostics,
+        draft_sha256,
+    )
 
 
 def rebuild_review_gate(workspace_path: str | Path, story_id: str, chapter: int) -> dict[str, Path]:
@@ -589,6 +618,7 @@ def rebuild_review_gate(workspace_path: str | Path, story_id: str, chapter: int)
     diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8")) if diagnostics_path.exists() else {}
     gate_path, task_path, novelness_path = _write_gate(
         story_path,
+        story_id,
         chapter,
         str(uuid4()),
         _draft_hash(story_path, chapter),
@@ -606,6 +636,7 @@ def rebuild_review_gate(workspace_path: str | Path, story_id: str, chapter: int)
 
 def _write_gate(
     story_path: Path,
+    story_id: str,
     chapter: int,
     run_id: str,
     draft_sha256: str,
@@ -614,9 +645,19 @@ def _write_gate(
     diagnostics: dict[str, Any] | None = None,
 ) -> tuple[Path, Path, Path]:
     correctness, missing_correctness = _correctness_status(review_rows)
-    novelness, missing_novelness = _novelness_status(review_rows, diagnostics)
+    novelness, missing_novelness = _novelness_status(review_rows, diagnostics, draft_sha256)
+    revision_resolution, unresolved_revision_issues = revision_resolution_status(
+        story_path,
+        story_id,
+        chapter,
+        draft_sha256,
+    )
     base_status = _combined_gate_status([str(row["decision"]) for row in review_rows])
-    if correctness != "pass" or novelness in {"incomplete", "chapter_rewrite"}:
+    if (
+        correctness != "pass"
+        or novelness in {"incomplete", "chapter_rewrite"}
+        or revision_resolution == "incomplete"
+    ):
         status = "blocked"
     elif novelness in {"targeted_revision", "scene_rewrite"} or base_status == "revision_recommended":
         status = "revision_recommended"
@@ -645,6 +686,8 @@ review_packet: context/review_pack.md
 combined_review: {combined_path.relative_to(story_path)}
 correctness_status: {correctness}
 novelness_status: {novelness}
+revision_resolution_status: {revision_resolution}
+unresolved_revision_issues: {', '.join(unresolved_revision_issues) or 'none'}
 missing_correctness_reviewers: {', '.join(missing_correctness) or 'none'}
 missing_novelness_reviewers: {', '.join(missing_novelness) or 'none'}
 
@@ -658,10 +701,11 @@ missing_novelness_reviewers: {', '.join(missing_novelness) or 'none'}
 - evidence_based_review: pass
 - correctness: {correctness}
 - novelness: {novelness}
+- revision_comment_resolution: {revision_resolution}
 
 ## Required Revisions
 
-{"- None." if status in {"accepted", "accepted_with_notes"} else "- Resolve every failed or incomplete gate dimension, then rerun the review."}
+{"- None." if status in {"accepted", "accepted_with_notes"} else "- Resolve every failed or incomplete gate dimension and prior issue marker, then rerun the review."}
 
 ## Decision
 
@@ -683,10 +727,11 @@ missing_novelness_reviewers: {', '.join(missing_novelness) or 'none'}
 - Combined report: {combined_path.relative_to(story_path)}
 - Correctness: {correctness}
 - Novelness: {novelness}
+- Revision comment resolution: {revision_resolution}
 
 ## Remaining Required Revisions
 
-{"- None." if status in {"accepted", "accepted_with_notes"} else "- Resolve the failed gate dimensions and rerun all required reviewers."}
+{"- None." if status in {"accepted", "accepted_with_notes"} else "- Resolve the failed gate dimensions and prior issue markers, then rerun all required reviewers."}
 
 ## Carry-Forward Tasks
 
@@ -702,6 +747,7 @@ missing_novelness_reviewers: {', '.join(missing_novelness) or 'none'}
         missing_novelness,
         review_rows,
         diagnostics,
+        draft_sha256,
     )
     return gate_path, task_path, novelness_path
 
@@ -720,10 +766,12 @@ def run_review(
     run_id = str(uuid4())
     draft_sha256 = _draft_hash(story_path, chapter)
     _write_run_state(story_path, chapter, run_id, "in_progress", draft_sha256)
+    attempts: list[dict[str, Any]] = []
 
     try:
         review_pack_path = build_review_pack(workspace_path, story_id, chapter)
         review_pack = load_story_context_file(story_path, "review_pack.md")
+        revision_receipt = load_revision_receipt(story_path, story_id, chapter)
         reviewer_config = _load_yaml_file(story_path / "reviewers" / "reviewer_config.yaml")
         review_specs: list[tuple[str, str, dict[str, Any]]] = []
         for layer, key in (
@@ -741,7 +789,6 @@ def run_review(
         reports: list[Path] = []
         record_paths: list[Path] = []
         rows: list[dict[str, Any]] = []
-        attempts: list[dict[str, Any]] = []
         pending_records: list[tuple[Path, Path, dict[str, Any]]] = []
         codex_thread_ids: set[str] = set()
         codex_subagent_thread_ids: set[str] = set()
@@ -753,7 +800,21 @@ def run_review(
         }
         for layer, reviewer_id, settings in review_specs:
             profile = _reviewer_profile(story_path, layer, reviewer_id, settings)
-            prompt = _review_prompt(story_id, chapter, layer, reviewer_id, settings, profile, review_pack)
+            prompt = _review_prompt(
+                story_id,
+                chapter,
+                layer,
+                reviewer_id,
+                settings,
+                profile,
+                review_pack,
+                prior_issues_for_reviewer(
+                    revision_receipt,
+                    draft_sha256,
+                    layer,
+                    reviewer_id,
+                ),
+            )
             model_chain = _model_chain(config, settings)
             result = attempt_structured_model_chain(
                 prompt,
@@ -777,6 +838,7 @@ def run_review(
                 router_options,
             )
             if not result.get("ok"):
+                attempts.extend(result.get("attempts", []))
                 raise RuntimeError(f"reviewer {reviewer_id} failed for all configured models: {result.get('attempts', [])}")
             if result.get("provider_type") == "codex_cli":
                 session = result.get("session")
@@ -830,6 +892,7 @@ def run_review(
         )
         gate_path, task_path, novelness_path = _write_gate(
             story_path,
+            story_id,
             chapter,
             run_id,
             draft_sha256,
@@ -866,6 +929,20 @@ def run_review(
         }
     except Exception as exc:
         _write_run_state(story_path, chapter, run_id, "failed", draft_sha256, str(exc))
+        write_run_provenance(
+            story_path,
+            chapter,
+            "review",
+            {"model_profile": None, "attempts": attempts},
+            config,
+            {"review_gate": str(_gate_path(story_path, chapter).relative_to(story_path))},
+            {
+                "run_id": run_id,
+                "status": "failed",
+                "draft_sha256": draft_sha256,
+                "error": str(exc),
+            },
+        )
         raise
 
 
