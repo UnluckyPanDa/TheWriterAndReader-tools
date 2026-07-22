@@ -34,6 +34,8 @@ def collect_required_revision_issues(
         )
     for layer in ("standard", "series", "special"):
         for path in sorted(review_root.glob(f"{layer}.*.json")):
+            if path.name.endswith(".normalization.json"):
+                continue
             try:
                 record = parse_review_run_record(path.read_text(encoding="utf-8"))
             except ValueError as exc:

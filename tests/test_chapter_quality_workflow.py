@@ -18,6 +18,7 @@ from tools.review.run_review import _novelness_status, rebuild_review_gate, run_
 from tools.publish.build_publish_pack import build_publish_pack
 from tools.writing.build_write_pack import build_write_pack
 from tools.writing.generate_draft import (
+    StructuredOutputFailure,
     build_generation_prompt,
     build_polish_prompt,
     generate_draft,
@@ -235,6 +236,90 @@ class ChapterQualityWorkflowTests(unittest.TestCase):
         valid["scenes"][0]["change_axes"] = []
         with self.assertRaisesRegex(ValueError, "invalid scene contract"):
             parse_scene_contract(json.dumps(valid), "story-1", 1)
+
+    def test_scene_contract_requires_exact_story_and_chapter_identity(self) -> None:
+        valid = json.loads(_mock_response("scene contract JSON\nstory_id: story-1\nchapter: 1"))
+
+        with self.assertRaisesRegex(ValueError, "scene contract story_id must be story-1"):
+            parse_scene_contract(json.dumps({**valid, "story_id": "story-2"}), "story-1", 1)
+        with self.assertRaisesRegex(ValueError, "scene contract chapter must be 1"):
+            parse_scene_contract(json.dumps({**valid, "chapter": 2}), "story-1", 1)
+
+    def test_scene_contract_successful_repair_preserves_validation_evidence(self) -> None:
+        config = load_config_example()
+        config["writing_stages"]["scene_planning"]["provider_group"] = "local_first"
+        valid_text = _mock_response("scene contract JSON\nstory_id: story-1\nchapter: 1")
+        invalid = json.loads(valid_text)
+        invalid["story_id"] = "story-2"
+        invalid_text = json.dumps(invalid, separators=(",", ":"))
+
+        with patch(
+            "shared.lib.model_router.run_local_cli_model",
+            side_effect=[
+                {
+                    "ok": True,
+                    "text": invalid_text,
+                    "raw_response_text": f"\n{invalid_text}\n",
+                    "reason": None,
+                },
+                {
+                    "ok": True,
+                    "text": valid_text,
+                    "raw_response_text": f"\n{valid_text}\n",
+                    "reason": None,
+                },
+            ],
+        ):
+            contract, repaired = generate_scene_contract(
+                config, "story-1", 1, "Minimal write pack.", None
+            )
+
+        self.assertEqual(contract["story_id"], "story-1")
+        self.assertEqual(len(repaired["attempts"]), 2)
+        initial, repair = repaired["attempts"]
+        self.assertEqual(initial["structured_output_phase"], "initial")
+        self.assertEqual(initial["validation_status"], "invalid")
+        self.assertIn("story_id must be story-1", initial["validation_error"])
+        self.assertEqual(initial["response_text"], f"\n{invalid_text}\n")
+        self.assertEqual(repair["structured_output_phase"], "repair")
+        self.assertEqual(repair["validation_status"], "valid")
+        self.assertEqual(repair["response_text"], f"\n{valid_text}\n")
+
+    def test_scene_contract_invalid_repair_preserves_validation_evidence(self) -> None:
+        config = load_config_example()
+        config["writing_stages"]["scene_planning"]["provider_group"] = "local_first"
+        invalid = json.loads(
+            _mock_response("scene contract JSON\nstory_id: story-1\nchapter: 1")
+        )
+        invalid["story_id"] = "story-2"
+        invalid_initial = json.dumps(invalid, separators=(",", ":"))
+        invalid_repair = '{"still":"invalid"}'
+
+        with patch(
+            "shared.lib.model_router.run_local_cli_model",
+            side_effect=[
+                {"ok": True, "text": invalid_initial, "reason": None},
+                {"ok": True, "text": invalid_repair, "reason": None},
+            ],
+        ):
+            with self.assertRaisesRegex(
+                StructuredOutputFailure, "scene planning failed for all configured models"
+            ) as raised:
+                generate_scene_contract(config, "story-1", 1, "Minimal write pack.", None)
+
+        attempts = raised.exception.result["attempts"]
+        self.assertEqual(
+            [attempt["structured_output_phase"] for attempt in attempts],
+            ["initial", "repair"],
+        )
+        self.assertEqual(
+            [attempt["validation_status"] for attempt in attempts],
+            ["invalid", "invalid"],
+        )
+        self.assertIn("story_id must be story-1", attempts[0]["validation_error"])
+        self.assertIn("invalid scene contract", attempts[1]["validation_error"])
+        self.assertEqual(attempts[0]["response_text"], invalid_initial)
+        self.assertEqual(attempts[1]["response_text"], invalid_repair)
 
     def test_scene_contract_rejects_story_contamination_absent_from_write_pack(self) -> None:
         contract = json.loads(

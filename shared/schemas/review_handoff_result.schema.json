@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thewriterandreader.local/schemas/review_handoff_result.schema.json",
+  "title": "ReviewHandoffResultV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "handoff_type",
+    "status",
+    "execution_id",
+    "request_path",
+    "request_digest",
+    "story_id",
+    "chapter",
+    "draft_sha256",
+    "input_fingerprint",
+    "records",
+    "created_at",
+    "result_digest"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "handoff_type": {"type": "string", "const": "review_result"},
+    "status": {"type": "string", "enum": ["complete", "failed"]},
+    "execution_id": {"type": "string", "minLength": 1},
+    "request_path": {"type": "string", "minLength": 1},
+    "request_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "story_id": {"type": "string", "minLength": 1},
+    "chapter": {"type": "integer", "minimum": 1},
+    "draft_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "input_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "records": {"type": "array", "items": {"type": "object"}},
+    "record_sha256": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+    "attempts": {"type": "array"},
+    "error": {"type": "string"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "result_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

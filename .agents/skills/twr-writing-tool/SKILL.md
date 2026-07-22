@@ -126,3 +126,10 @@ Promote only after the current draft has a complete accepted review gate:
 ```bash
 twr write accept --workspace <workspace> --story <story-id> --chapter <chapter>
 ```
+
+Draft stages tolerate usable prose and older chapter layouts. Mechanical
+wrappers are stripped and understandable scene plans are normalized; when
+planning metadata remains unusable but chapter prose is usable, the run records
+an explicit unstructured-planning fallback. Canon, accepted chapters, and the
+active writer draft remain outside the review handoff and are never edited by
+review execution.

@@ -18,3 +18,8 @@ changes, and ending turns validated before chapter drafting.
 `review_decision.schema.json` defines canonical model-produced fiction review
 decisions. `review_run_record.schema.json` defines the trusted TWR provenance
 envelope for one reviewer run.
+
+`review_handoff_request.schema.json` and `review_handoff_result.schema.json`
+define the append-only prepare/execute/apply protocol. Flexible or legacy
+review output is normalized at the boundary; receipts remain sidecars so older
+readers can continue to parse the canonical V1 records.

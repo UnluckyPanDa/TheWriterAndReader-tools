@@ -58,3 +58,11 @@ Load only the reference required for the current request. Keep online providers
 disabled until the user explicitly enables them for story content. Preserve
 story and series canon unless the requested wizard operation explicitly edits
 their structure.
+
+For review on another thread, device, or private worktree, keep one active
+writer per chapter and use `review prepare`, `review execute`, then `review
+apply`. Execute is append-only; apply validates the request digest, draft SHA,
+review-input fingerprint, complete reviewer set, and mixed-run protection before
+rebuilding the gate last. Use `docs/multi-device-workflow.md` for the transfer
+sequence. Review and draft model output may be flexible; TWR normalizes it into
+the existing canonical records and preserves raw output in sidecar receipts.

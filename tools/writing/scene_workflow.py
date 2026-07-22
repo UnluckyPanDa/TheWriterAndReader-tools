@@ -18,6 +18,7 @@ from shared.lib.story_loader import load_story_yaml
 from shared.lib.workspace_loader import resolve_story_path
 from tools.writing.build_write_pack import build_write_pack, write_pack_token_counts
 from tools.writing.generate_draft import (
+    StructuredOutputFailure,
     _normalize_scene_draft,
     build_scene_generation_prompt,
     chapter_heading,
@@ -48,8 +49,54 @@ def plan_scenes(
     require_explicit_runtime_config(config, "scene planning")
     write_pack_path = build_write_pack(str(workspace_path), story_id, chapter)
     write_pack = write_pack_path.read_text(encoding="utf-8")
-    contract, contract_result = generate_scene_contract(config, story_id, chapter, write_pack, options)
-    skeleton, skeleton_result = generate_scene_skeleton(config, story_id, chapter, contract, options)
+    run_id = str(uuid4())
+    try:
+        contract, contract_result = generate_scene_contract(
+            config, story_id, chapter, write_pack, options
+        )
+    except StructuredOutputFailure as exc:
+        write_run_provenance(
+            story_path,
+            chapter,
+            "scene_planning",
+            exc.result,
+            config,
+            {"write_pack": str(write_pack_path.relative_to(story_path))},
+            {
+                "run_id": run_id,
+                "status": "failed",
+                "failure_stage": exc.stage,
+                "error": str(exc),
+            },
+        )
+        raise
+    try:
+        skeleton, skeleton_result = generate_scene_skeleton(
+            config, story_id, chapter, contract, options
+        )
+    except StructuredOutputFailure as exc:
+        failure_result = {
+            **exc.result,
+            "attempts": [
+                *contract_result.get("attempts", []),
+                *exc.result.get("attempts", []),
+            ],
+        }
+        write_run_provenance(
+            story_path,
+            chapter,
+            "scene_planning",
+            failure_result,
+            config,
+            {"write_pack": str(write_pack_path.relative_to(story_path))},
+            {
+                "run_id": run_id,
+                "status": "failed",
+                "failure_stage": exc.stage,
+                "error": str(exc),
+            },
+        )
+        raise
     contract_path, skeleton_path = _plan_paths(story_path, chapter)
     for path, payload in ((contract_path, contract), (skeleton_path, skeleton)):
         assert_story_write_allowed(path, story_path)
@@ -69,6 +116,7 @@ def plan_scenes(
             "write_pack": str(write_pack_path.relative_to(story_path)),
         },
         {
+            "run_id": run_id,
             "stages": ["scene_planning", "scene_skeleton"],
             "context_tokens_by_category": write_pack_token_counts(write_pack),
         },

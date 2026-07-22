@@ -22,6 +22,29 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _prepare(args: argparse.Namespace) -> int:
+    from shared.lib.review_handoff import prepare_review_handoff
+
+    print(prepare_review_handoff(args.workspace, args.story, args.chapter))
+    return 0
+
+
+def _execute(args: argparse.Namespace) -> int:
+    from shared.lib.review_handoff import execute_review_handoff
+
+    print(execute_review_handoff(args.workspace, args.story, args.chapter, args.request, args.config))
+    return 0
+
+
+def _apply(args: argparse.Namespace) -> int:
+    from shared.lib.review_handoff import apply_review_handoff
+
+    outputs = apply_review_handoff(args.workspace, args.story, args.chapter, args.request, args.result)
+    for name, path in outputs.items():
+        print(f"{name}: {path}")
+    return 0
+
+
 def _novelness(args: argparse.Namespace) -> int:
     from tools.review.run_review import run_novelness_gate
 
@@ -66,6 +89,37 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     run_parser.add_argument("--chapter", required=True, type=int)
     run_parser.add_argument("--config", help="Optional config path.")
     run_parser.set_defaults(handler=_run)
+
+    prepare_parser = review_subparsers.add_parser(
+        "prepare",
+        help="Prepare an append-only review request for another thread or device.",
+    )
+    prepare_parser.add_argument("--workspace", required=True)
+    prepare_parser.add_argument("--story", required=True)
+    prepare_parser.add_argument("--chapter", required=True, type=int)
+    prepare_parser.set_defaults(handler=_prepare)
+
+    execute_parser = review_subparsers.add_parser(
+        "execute",
+        help="Execute a prepared review request without promoting current records.",
+    )
+    execute_parser.add_argument("--workspace", required=True)
+    execute_parser.add_argument("--story", required=True)
+    execute_parser.add_argument("--chapter", required=True, type=int)
+    execute_parser.add_argument("--request", required=True)
+    execute_parser.add_argument("--config", help="Optional config path.")
+    execute_parser.set_defaults(handler=_execute)
+
+    apply_parser = review_subparsers.add_parser(
+        "apply",
+        help="Validate and apply a complete review handoff result.",
+    )
+    apply_parser.add_argument("--workspace", required=True)
+    apply_parser.add_argument("--story", required=True)
+    apply_parser.add_argument("--chapter", required=True, type=int)
+    apply_parser.add_argument("--request", required=True)
+    apply_parser.add_argument("--result", required=True)
+    apply_parser.set_defaults(handler=_apply)
 
     novelness_parser = review_subparsers.add_parser(
         "novelness",
