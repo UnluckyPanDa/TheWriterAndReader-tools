@@ -153,6 +153,22 @@ twr review run --workspace /path/to/workspace --story story-1 --chapter 1
 twr write accept --workspace /path/to/workspace --story story-1 --chapter 1
 ```
 
+For private multi-device review, keep one active writer for the chapter and
+use the append-only review handoff protocol:
+
+```text
+twr review prepare --workspace /path/to/workspace --story story-1 --chapter 1
+twr review execute --workspace /path/to/workspace --story story-1 --chapter 1 --request <request.json>
+twr review apply --workspace /path/to/workspace --story story-1 --chapter 1 --request <request.json> --result <review_result.json>
+```
+
+Execution writes only a run-scoped result bundle. Apply validates the request,
+draft SHA, review-input fingerprint, complete reviewer set, and run binding
+before promoting canonical V1 records and rebuilding the gate last. Review
+normalization accepts current/legacy JSON or Markdown, fenced/embedded JSON,
+and semantically clear prose while preserving raw output in sidecar receipts.
+See [`docs/multi-device-workflow.md`](docs/multi-device-workflow.md).
+
 For explicit scene control, use:
 
 ```text

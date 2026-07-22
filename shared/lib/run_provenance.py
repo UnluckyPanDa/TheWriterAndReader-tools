@@ -68,9 +68,27 @@ def write_prepared_run_provenance(story_path: str | Path, payload: dict[str, Any
     chapter = int(payload["chapter"])
     operation = str(payload["operation"])
     run_id = str(payload["run_id"])
-    history_path = root / "runs" / f"chapter_{chapter:03d}" / run_id / f"{operation}.json"
+    history_root = root / "runs" / f"chapter_{chapter:03d}" / run_id
+    prepared_payload = dict(payload)
+    attempts: list[Any] = []
+    for index, source_attempt in enumerate(payload.get("attempts", []), start=1):
+        if not isinstance(source_attempt, dict):
+            attempts.append(source_attempt)
+            continue
+        attempt = dict(source_attempt)
+        response_text = attempt.pop("response_text", None)
+        if isinstance(response_text, str) and response_text:
+            response_path = history_root / "responses" / f"attempt_{index:02d}.txt"
+            assert_story_write_allowed(response_path, root)
+            safe_write_file(response_path, response_text, root)
+            attempt["response_artifact"] = str(response_path.relative_to(root))
+            attempt["response_characters"] = len(response_text)
+        attempts.append(attempt)
+    prepared_payload["attempts"] = attempts
+    history_path = history_root / f"{operation}.json"
     assert_story_write_allowed(history_path, root)
-    safe_write_file(history_path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n", root)
+    serialized = json.dumps(prepared_payload, ensure_ascii=False, indent=2) + "\n"
+    safe_write_file(history_path, serialized, root)
     output_path = root / "runs" / f"chapter_{chapter:03d}_{operation}.json"
     assert_story_write_allowed(output_path, root)
-    return safe_write_file(output_path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n", root)
+    return safe_write_file(output_path, serialized, root)

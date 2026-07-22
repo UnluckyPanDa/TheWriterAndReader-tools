@@ -140,6 +140,29 @@ class CodexReviewRoutingTests(unittest.TestCase):
         local.assert_called_once()
         codex.assert_called_once()
 
+    def test_structured_output_attempt_preserves_raw_provider_response(self) -> None:
+        config = copy.deepcopy(load_config_example())
+        config["writing_stages"]["chapter_generation"]["provider_group"] = "local_first"
+        chain = select_model_for_stage(config, "chapter_generation")
+
+        with patch(
+            "shared.lib.model_router.run_local_cli_model",
+            return_value={
+                "ok": True,
+                "text": '{"story_id":"story-1"}',
+                "raw_response_text": '\n{"story_id":"story-1"}\n',
+                "reason": None,
+            },
+        ):
+            result = attempt_model_chain(
+                "Return JSON.", chain, config, {"structured_output": True}
+            )
+
+        self.assertEqual(
+            result["attempts"][0]["response_text"],
+            '\n{"story_id":"story-1"}\n',
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

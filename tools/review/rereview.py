@@ -78,7 +78,7 @@ def _rereview_prompt(
 - Evaluate the explanation once against the draft, canon constraints, reveal lock, and exact cited passage.
 - Accept the explanation only when the current prose already supports it and no reader-facing defect remains.
 - If the explanation does not resolve the issue, require rewriting; do not request another explanation.
-- Return one complete replacement ReviewDecisionV1 JSON object with exact evidence.
+- Return one clear replacement review with exact evidence. JSON, Markdown, or prose are all acceptable.
 - Preserve the exact identity values in the output contract.
 - Do not wrap the JSON in a Markdown fence and do not add commentary.
 
@@ -245,7 +245,7 @@ def rereview_explanation(
     for path, content in prior_artifacts:
         assert_story_write_allowed(path, story_path)
         safe_write_file(path, content, story_path)
-    replaced_report, replaced_record, _ = _write_review_report(
+    replaced_report, replaced_record, _, _normalization = _write_review_report(
         story_path,
         chapter,
         layer,

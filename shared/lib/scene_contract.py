@@ -128,7 +128,11 @@ def validate_scene_contract_grounding(data: dict[str, Any], write_pack: str) -> 
         {
             "chapter_progression": data["chapter_progression"],
             "scenes": [
-                {key: value for key, value in scene.items() if key != "scene_id"}
+                {
+                    key: value
+                    for key, value in scene.items()
+                    if key not in {"scene_id", "change_axes"}
+                }
                 for scene in data["scenes"]
             ],
         },
@@ -196,3 +200,93 @@ def parse_scene_contract(
     if write_pack is not None:
         validate_scene_contract_grounding(data, write_pack)
     return data
+
+
+def normalize_scene_contract(
+    text: str,
+    story_id: str,
+    chapter: int,
+    write_pack: str | None = None,
+) -> dict[str, Any]:
+    """Normalize an understandable legacy or lightly structured scene plan."""
+    try:
+        raw = json.loads(_json_text(text))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"scene plan is not recognizable JSON: {exc.msg}") from exc
+    if isinstance(raw, dict):
+        nested = raw.get("scene_plan") or raw.get("plan") or raw.get("outline")
+        if isinstance(nested, dict):
+            raw = nested
+    if not isinstance(raw, dict):
+        raise ValueError("scene plan must be an object")
+    if "story_id" in raw and raw["story_id"] != story_id:
+        raise ValueError(f"scene plan story_id must be {story_id}")
+    if "chapter" in raw and raw["chapter"] != chapter:
+        raise ValueError(f"scene plan chapter must be {chapter}")
+    raw_scenes = raw.get("scenes") or raw.get("steps") or raw.get("beats") or raw.get("acts")
+    if isinstance(raw_scenes, dict):
+        raw_scenes = list(raw_scenes.values())
+    if isinstance(raw_scenes, str):
+        raw_scenes = [raw_scenes]
+    if not isinstance(raw_scenes, list) or not raw_scenes:
+        raise ValueError("scene plan lacks understandable scenes")
+
+    def text_value(item: Any, *keys: str, default: str) -> str:
+        if isinstance(item, str) and item.strip():
+            return item.strip()
+        if isinstance(item, dict):
+            for key in keys:
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return default
+
+    def list_value(item: Any, *keys: str, default: list[str]) -> list[str]:
+        if isinstance(item, dict):
+            for key in keys:
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    return [value.strip()]
+                if isinstance(value, list):
+                    values = [str(entry).strip() for entry in value if str(entry).strip()]
+                    if values:
+                        return values
+        return list(default)
+
+    scenes: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_scenes, start=1):
+        viewpoint = text_value(item, "viewpoint_character", "viewpoint", "character", "pov", default="protagonist")
+        goal = text_value(item, "immediate_goal", "goal", "purpose", "objective", "description", default="Advance the active chapter task.")
+        pressure = text_value(item, "pressure", "conflict", "obstacle", default="The situation resists an easy solution.")
+        required_change = text_value(item, "required_change", "change", "consequence", "outcome", default="The immediate situation changes.")
+        ending = text_value(item, "ending_turn", "ending", "turn", "exit_condition", default="The choice creates forward pressure.")
+        scenes.append(
+            {
+                "scene_id": text_value(item, "scene_id", "id", "name", default=f"scene-{index}"),
+                "viewpoint_character": viewpoint,
+                "starting_state": text_value(item, "starting_state", "entry_condition", "entry", default="The chapter task remains unresolved."),
+                "immediate_goal": goal,
+                "pressure": pressure,
+                "opposition": text_value(item, "opposition", "resistance", "obstacle", default=pressure),
+                "change_axes": list_value(item, "change_axes", "axes", default=["practical_situation"]),
+                "required_change": required_change,
+                "new_information": text_value(item, "new_information", "discovery", "reveal", default="The action creates a consequential discovery."),
+                "physical_setting": text_value(item, "physical_setting", "setting", "location", default="The active chapter setting."),
+                "active_characters": list_value(item, "active_characters", "characters", default=[viewpoint]),
+                "required_beats": list_value(item, "required_beats", "beats", "actions", default=[goal, required_change]),
+                "forbidden_reveals": list_value(item, "forbidden_reveals", "forbidden", "reveal_lock", default=[]),
+                "ending_turn": ending,
+            }
+        )
+    normalized = {
+        "schema_version": 1,
+        "story_id": story_id,
+        "chapter": chapter,
+        "chapter_progression": {
+            "plot": text_value(raw.get("chapter_progression", raw), "plot", "plot_progression", default="The chapter task changes the practical situation."),
+            "character": text_value(raw.get("chapter_progression", raw), "character", "character_progression", default="The viewpoint character makes a consequential choice."),
+            "mystery": text_value(raw.get("chapter_progression", raw), "mystery", "mystery_progression", default="The outcome creates forward pressure."),
+        },
+        "scenes": scenes,
+    }
+    return parse_scene_contract(json.dumps(normalized, ensure_ascii=False), story_id, chapter, write_pack)

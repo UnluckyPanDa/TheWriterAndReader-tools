@@ -219,6 +219,13 @@ def _attempt_model_profile(
         "status": "success" if result.get("ok") else "failed",
         "reason": result.get("reason"),
     }
+    if options.get("structured_output") or options.get("preserve_raw_response"):
+        response_text = result.get("raw_response_text", result.get("text"))
+        if isinstance(response_text, str) and response_text:
+            attempt["response_text"] = response_text
+        structured_stage = options.get("structured_output_stage")
+        if isinstance(structured_stage, str) and structured_stage:
+            attempt["structured_output_stage"] = structured_stage
     _copy_result_metadata(attempt, result, model_profile)
     return result, attempt
 
@@ -260,6 +267,9 @@ def _success_result(
         "provider_type": provider_config.get("type") if isinstance(provider_config, dict) else None,
         "attempts": attempts,
     }
+    raw_response_text = result.get("raw_response_text")
+    if isinstance(raw_response_text, str):
+        success["raw_response_text"] = raw_response_text
     if value is not None:
         success["value"] = value
     _copy_result_metadata(success, result, model_profile)
@@ -275,7 +285,11 @@ def attempt_structured_model_chain(
     options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate initial and same-profile repair responses before fallback."""
-    router_options = {**(options or {}), "structured_output": True}
+    router_options = {
+        **(options or {}),
+        "structured_output": not bool((options or {}).get("flexible_output")),
+        "preserve_raw_response": True,
+    }
     attempts: list[dict[str, Any]] = []
     for model_profile in model_chain:
         profile_name = str(model_profile.get("profile_name", model_profile.get("model", "unknown")))
@@ -287,7 +301,7 @@ def attempt_structured_model_chain(
             config,
             router_options,
         )
-        initial_attempt["phase"] = "initial"
+        initial_attempt.update(phase="initial", structured_output_phase="initial")
         if not initial_result.get("ok"):
             attempts.append(initial_attempt)
             _notify_progress(
@@ -299,10 +313,16 @@ def attempt_structured_model_chain(
         try:
             value = validator(initial_text)
         except (TypeError, ValueError) as exc:
-            initial_attempt.update(status="invalid", reason="validation_failed", validation_error=str(exc))
+            initial_attempt.update(
+                status="invalid",
+                reason="validation_failed",
+                validation_status="invalid",
+                validation_error=str(exc),
+            )
             attempts.append(initial_attempt)
             _notify_progress(router_options, f"{label}: {profile_name} returned invalid output; repairing")
         else:
+            initial_attempt["validation_status"] = "valid"
             attempts.append(initial_attempt)
             _notify_progress(router_options, f"{label}: {profile_name} completed")
             return _success_result(initial_result, model_profile, attempts, value)
@@ -313,7 +333,7 @@ def attempt_structured_model_chain(
             config,
             router_options,
         )
-        repaired_attempt["phase"] = "repair"
+        repaired_attempt.update(phase="repair", structured_output_phase="repair")
         if not repaired_result.get("ok"):
             attempts.append(repaired_attempt)
             _notify_progress(
@@ -325,10 +345,16 @@ def attempt_structured_model_chain(
         try:
             value = validator(repaired_text)
         except (TypeError, ValueError) as exc:
-            repaired_attempt.update(status="invalid", reason="validation_failed", validation_error=str(exc))
+            repaired_attempt.update(
+                status="invalid",
+                reason="validation_failed",
+                validation_status="invalid",
+                validation_error=str(exc),
+            )
             attempts.append(repaired_attempt)
             _notify_progress(router_options, f"{label}: {profile_name} repair remained invalid")
             continue
+        repaired_attempt["validation_status"] = "valid"
         attempts.append(repaired_attempt)
         _notify_progress(router_options, f"{label}: {profile_name} repair completed")
         return _success_result(repaired_result, model_profile, attempts, value)

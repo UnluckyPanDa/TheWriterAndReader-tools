@@ -13,7 +13,11 @@ from shared.lib.config_loader import load_config
 from shared.lib.model_router import attempt_model_chain, attempt_structured_model_chain, select_model_for_stage
 from shared.lib.path_rules import assert_story_write_allowed
 from shared.lib.run_provenance import require_explicit_runtime_config, write_run_provenance
-from shared.lib.scene_contract import SCHEMA_PATH as SCENE_CONTRACT_SCHEMA_PATH, parse_scene_contract
+from shared.lib.scene_contract import (
+    SCHEMA_PATH as SCENE_CONTRACT_SCHEMA_PATH,
+    normalize_scene_contract,
+    parse_scene_contract,
+)
 from shared.lib.scene_skeleton import SCHEMA_PATH as SCENE_SKELETON_SCHEMA_PATH, parse_scene_skeleton
 from shared.lib.safe_write import safe_write_file
 from shared.lib.story_loader import load_markdown_file, load_story_yaml
@@ -65,8 +69,12 @@ def looks_like_chapter_heading(line: str) -> bool:
 
 
 def normalize_generated_draft(text: str, heading: str) -> str:
-    """Remove model preamble and enforce the configured chapter heading."""
-    lines = text.strip().splitlines()
+    """Strip mechanical wrappers and return usable chapter Markdown."""
+    cleaned = str(text or "").strip()
+    cleaned = re.sub(r"^\s*```(?:markdown|md|text)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```\s*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^\s*(?:BEGIN|END)\s+(?:CHAPTER|DRAFT)\s*$", "", cleaned, flags=re.IGNORECASE | re.MULTILINE)
+    lines = cleaned.strip().splitlines()
     if not lines:
         return heading
 
@@ -86,6 +94,9 @@ def normalize_generated_draft(text: str, heading: str) -> str:
             chapter_lines[index] = heading
             return "\n".join(chapter_lines[index:]).strip()
     return f"{heading}\n\n{chapter_text}".strip()
+
+
+normalize_draft_output = normalize_generated_draft
 
 
 def build_scene_contract_prompt(story_id: str, chapter: int, write_pack: str) -> str:
@@ -398,6 +409,100 @@ def _normalize_scene_draft(text: str) -> str:
     return "\n".join(lines).strip()
 
 
+def build_unstructured_chapter_prompt(
+    story_id: str,
+    chapter: int,
+    language: str,
+    heading: str,
+    write_pack: str,
+) -> str:
+    """Build a prose-only fallback prompt when planning metadata is unusable."""
+    return f"""Write chapter {chapter} of story `{story_id}` in {language} as finished novel prose.
+
+## Active Write Pack
+{write_pack}
+
+Use the supplied pack as factual and continuity constraints. Preserve reveal locks,
+write a sequence of concrete actions and consequences, and keep the point of view
+close to the active character. Do not return a plan, JSON, reviewer report, canon
+explanation, or process commentary. A chapter heading is optional. Use this heading
+if you include one: {heading}
+Return only usable chapter prose.
+"""
+
+
+class StructuredOutputFailure(RuntimeError):
+    """A structured writing stage failed with provenance-ready attempts."""
+
+    def __init__(self, message: str, stage: str, result: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.result = result
+
+
+def _unstructured_planning_fallback(
+    story_path: Path,
+    workspace_path: str | Path,
+    story_id: str,
+    chapter: int,
+    config: dict[str, Any],
+    write_pack: str,
+    heading: str,
+    run_id: str,
+    options: dict[str, Any] | None,
+    planning_failure: StructuredOutputFailure,
+) -> Path:
+    result = attempt_model_chain(
+        build_unstructured_chapter_prompt(story_id, chapter, story_language(load_story_yaml(story_path)), heading, write_pack),
+        select_model_for_stage(config, "chapter_generation"),
+        config,
+        {**(options or {}), "progress_label": "unstructured planning fallback", "preserve_raw_response": True},
+    )
+    draft_text = normalize_generated_draft(str(result.get("text", "")), heading)
+    prose = draft_text.removeprefix(heading).strip()
+    if not result.get("ok") or len(prose.split()) < 8:
+        error = RuntimeError(
+            f"unstructured planning fallback failed after {planning_failure.stage}: {result.get('attempts', [])}"
+        )
+        _write_generation_failure(story_path, chapter, config, run_id, "unstructured_planning_fallback", error, result)
+        raise error
+    output_path = story_path / "drafts" / f"chapter_{chapter:03d}.md"
+    assert_story_write_allowed(output_path, story_path)
+    saved_path = safe_write_file(output_path, draft_text.rstrip() + "\n", story_path)
+    diagnostics_path = write_diagnostics(workspace_path, story_id, chapter)
+    diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+    write_run_provenance(
+        story_path,
+        chapter,
+        "generation",
+        {"model_profile": result.get("model_profile"), "attempts": [*planning_failure.result.get("attempts", []), *result.get("attempts", [])]},
+        config,
+        {"draft": str(saved_path.relative_to(story_path)), "diagnostics": str(diagnostics_path.relative_to(story_path)), "write_pack": str((story_path / "context" / "write_pack.md").relative_to(story_path))},
+        {
+            "run_id": run_id,
+            "generation_pass": "unstructured_planning_fallback",
+            "planning_fallback": {"mode": "unstructured_prose", "source_stage": planning_failure.stage, "reason": str(planning_failure)},
+            "writing_metrics": diagnostics.get("metrics", {}),
+        },
+    )
+    return saved_path
+
+
+def _parse_scene_contract_output(
+    text: str,
+    story_id: str,
+    chapter: int,
+    write_pack: str,
+) -> dict[str, Any]:
+    try:
+        return parse_scene_contract(text, story_id, chapter, write_pack)
+    except ValueError as strict_error:
+        try:
+            return normalize_scene_contract(text, story_id, chapter, write_pack)
+        except ValueError:
+            raise strict_error
+
+
 def generate_scene_contract(
     config: dict[str, Any],
     story_id: str,
@@ -410,13 +515,16 @@ def generate_scene_contract(
         **(options or {}),
         "output_schema_path": str(SCENE_CONTRACT_SCHEMA_PATH),
         "structured_output": True,
+        "flexible_output": True,
+        "preserve_raw_response": True,
+        "structured_output_stage": "scene_contract",
         "progress_label": "scene contract",
     }
     result = attempt_structured_model_chain(
         build_scene_contract_prompt(story_id, chapter, write_pack),
         chain,
         config,
-        lambda text: parse_scene_contract(text, story_id, chapter, write_pack),
+        lambda text: _parse_scene_contract_output(text, story_id, chapter, write_pack),
         lambda text, error: _scene_contract_repair_prompt(
             story_id,
             chapter,
@@ -427,7 +535,11 @@ def generate_scene_contract(
         router_options,
     )
     if not result.get("ok"):
-        raise RuntimeError(f"scene planning failed for all configured models: {result.get('attempts', [])}")
+        raise StructuredOutputFailure(
+            f"scene planning failed for all configured models: {result.get('attempts', [])}",
+            "scene_contract",
+            result,
+        )
     return result["value"], result
 
 
@@ -444,6 +556,9 @@ def generate_scene_skeleton(
         **(options or {}),
         "output_schema_path": str(SCENE_SKELETON_SCHEMA_PATH),
         "structured_output": True,
+        "flexible_output": True,
+        "preserve_raw_response": True,
+        "structured_output_stage": "scene_skeleton",
         "progress_label": "scene skeleton",
     }
     result = attempt_structured_model_chain(
@@ -467,7 +582,11 @@ def generate_scene_skeleton(
         router_options,
     )
     if not result.get("ok"):
-        raise RuntimeError(f"scene skeleton planning failed for all configured models: {result.get('attempts', [])}")
+        raise StructuredOutputFailure(
+            f"scene skeleton planning failed for all configured models: {result.get('attempts', [])}",
+            "scene_skeleton",
+            result,
+        )
     return result["value"], result
 
 
@@ -492,6 +611,7 @@ def _write_generation_failure(
             "run_id": run_id,
             "status": "failed",
             "failed_stage": stage,
+            "failure_stage": stage,
             "error": str(error),
         },
     )
@@ -514,6 +634,19 @@ def generate_draft(
     run_id = str(uuid4())
     try:
         scene_contract, planning_result = generate_scene_contract(config, story_id, chapter, write_pack, options)
+    except StructuredOutputFailure as exc:
+        return _unstructured_planning_fallback(
+            story_path,
+            workspace_path,
+            story_id,
+            chapter,
+            config,
+            write_pack,
+            chapter_heading(chapter, story_language(story_yaml)),
+            run_id,
+            options,
+            exc,
+        )
     except Exception as exc:
         _write_generation_failure(story_path, chapter, config, run_id, "scene_planning", exc)
         raise
@@ -524,6 +657,26 @@ def generate_draft(
             chapter,
             scene_contract,
             options,
+        )
+    except StructuredOutputFailure as exc:
+        failure_result = {
+            **exc.result,
+            "attempts": [
+                *planning_result.get("attempts", []),
+                *exc.result.get("attempts", []),
+            ],
+        }
+        return _unstructured_planning_fallback(
+            story_path,
+            workspace_path,
+            story_id,
+            chapter,
+            config,
+            write_pack,
+            chapter_heading(chapter, story_language(story_yaml)),
+            run_id,
+            options,
+            StructuredOutputFailure(str(exc), exc.stage, failure_result),
         )
     except Exception as exc:
         _write_generation_failure(story_path, chapter, config, run_id, "scene_skeleton", exc)

@@ -12,7 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from shared.lib.config_loader import load_config
-from shared.lib.model_router import attempt_structured_model_chain, select_model_for_reviewer
+from shared.lib.model_router import attempt_model_chain, attempt_structured_model_chain, select_model_for_reviewer
 from shared.lib.path_rules import assert_story_write_allowed
 from shared.lib.revision_evidence import (
     load_revision_receipt,
@@ -21,15 +21,12 @@ from shared.lib.revision_evidence import (
 )
 from shared.lib.review_parser import (
     REVIEW_DECISION_SCHEMA_PATH,
-    parse_review_decision,
+    normalize_review_decision,
     parse_review_run_record,
     render_review_report,
     review_decision_counts,
     review_decision_gate,
     review_decision_rewrite_scope,
-    review_decision_schema,
-    report_decision,
-    report_rewrite_scope,
     validate_review_run_record,
     validate_review_report,
 )
@@ -84,14 +81,67 @@ def _model_chain(config: dict[str, Any], reviewer_config: dict[str, Any]) -> lis
     return select_model_for_reviewer(config, reviewer_config)
 
 
+def _configured_semantic_normalizer(
+    config: dict[str, Any],
+    reviewer_config: dict[str, Any],
+    story_id: str,
+    chapter: int,
+    review_pack: str,
+) -> Any | None:
+    policy = config.get("review_policy", {}).get("semantic_normalization")
+    if not isinstance(policy, dict) or policy.get("enabled") is not True:
+        return None
+    routing = dict(reviewer_config)
+    provider_group = policy.get("provider_group")
+    if isinstance(provider_group, str) and provider_group.strip():
+        routing["provider_group"] = provider_group
+    if isinstance(policy.get("intelligence"), str):
+        routing["intelligence"] = policy["intelligence"]
+    chain = select_model_for_reviewer(config, routing)
+
+    def normalize(raw_text: str, error: str) -> str:
+        prompt = f"""Normalize this ambiguous chapter review into a semantically clear review.
+
+story_id: {story_id}
+chapter: {chapter}
+
+## Review Pack
+{review_pack}
+
+## Raw Review
+{raw_text}
+
+## Boundary Error
+{error}
+
+Return a clear review with a decision and evidence. JSON, Markdown, or prose are acceptable.
+"""
+        result = attempt_model_chain(
+            prompt,
+            chain,
+            config,
+            {"flexible_output": True, "preserve_raw_response": True, "progress_label": "review normalization"},
+        )
+        if not result.get("ok"):
+            raise ValueError(f"semantic normalization failed: {result.get('attempts', [])}")
+        return str(result.get("text", ""))
+
+    return normalize
+
+
 def _render_report_template(story_id: str, chapter: int, layer: str, reviewer_id: str) -> str:
     return f"""reviewer_id: {reviewer_id}
 reviewer_type: {layer}
 story_id: {story_id}
 chapter: {chapter}
 
-JSON Schema:
-{json.dumps(review_decision_schema(), ensure_ascii=False, indent=2)}"""
+Semantic review fields:
+- an unambiguous pass, minor-pass, revision, or blocked decision;
+- specific evidence with location, observation, and reader effect;
+- findings with severity, location, observation, impact, and suggested fix;
+- any carry-forward tasks and reviewer notes.
+The response may be JSON, Markdown, fenced content, a legacy TWR layout, or
+clear prose. TWR derives mechanical IDs, counts, identity, and gate fields."""
 
 
 def _review_prompt(
@@ -127,12 +177,10 @@ For every prior issue above, inspect the revised draft at the named location.
 - Never mark an issue resolved from the writer's claim alone. Use evidence from the current draft.
 
 ## Output Contract
-- Return only one JSON object matching ReviewDecisionV1 below.
-- Preserve the exact reviewer, story, and chapter identity values.
-- Every issue must complete every schema field.
-- severity_counts must exactly match the issues array.
-- A pass still needs specific positive evidence with location, observation, and reader_effect.
-- Do not wrap the JSON in a Markdown fence and do not add commentary.
+- Give one semantically clear review decision in any readable format.
+- Preserve the exact reviewer, story, and chapter identity values when you state them.
+- A pass still needs specific positive evidence with location, observation, and reader effect.
+- Include enough evidence for every finding to be actionable. TWR will normalize the result.
 
 {contract}
 """
@@ -146,7 +194,7 @@ def _review_repair_prompt(
     invalid_text: str,
     error: str,
 ) -> str:
-    return f"""Repair an invalid ReviewDecisionV1 JSON response.
+    return f"""Repair an unusable review response.
 
 reviewer_id: {reviewer_id}
 reviewer_type: {layer}
@@ -159,7 +207,7 @@ Validation error:
 Invalid response:
 {invalid_text}
 
-Return only one corrected JSON object matching ReviewDecisionV1. Preserve the exact identity values.
+Return one clear review in JSON, Markdown, or prose with the required decision and evidence. Preserve the exact identity values.
 """
 
 
@@ -238,11 +286,27 @@ def _write_review_report(
     run_id: str,
     draft_sha256: str,
     promote_current: bool = True,
-) -> tuple[Path, Path, dict[str, Any]]:
+) -> tuple[Path, Path, dict[str, Any], dict[str, Any]]:
+    raw_text = result.get("raw_response_text", result.get("text", ""))
+    if not isinstance(raw_text, str):
+        raw_text = str(raw_text)
     try:
-        decision = parse_review_decision(str(result.get("text", "")), reviewer_id, layer, story_id, chapter)
+        normalization = normalize_review_decision(raw_text, reviewer_id, layer, story_id, chapter)
+        normalization["raw_response_text"] = raw_text
+        decision = normalization["canonical"]
     except ValueError as exc:
-        raise RuntimeError(f"reviewer {reviewer_id} returned an invalid decision: {exc}") from exc
+        value = result.get("value")
+        if not isinstance(value, dict):
+            raise RuntimeError(f"reviewer {reviewer_id} returned an unusable decision: {exc}") from exc
+        decision = value
+        normalization = {
+            "source_format": "configured_semantic_normalizer",
+            "normalization_method": "configured_semantic_normalizer",
+            "inferred_fields": [],
+            "warnings": [str(exc)],
+            "raw_response_text": raw_text,
+            "canonical": decision,
+        }
     report_path = _report_path(story_path, chapter, layer, reviewer_id)
     record_path = _review_record_path(story_path, chapter, layer, reviewer_id)
     usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
@@ -275,9 +339,9 @@ def _write_review_report(
             f"reviewer {reviewer_id} could not be rendered as a compatible report: {', '.join(markdown_errors)}"
         )
     if promote_current:
-        _write_review_history(story_path, chapter, layer, reviewer_id, record)
-        _promote_review_record(story_path, report_path, record_path, record)
-    return report_path, record_path, record
+        _write_review_history(story_path, chapter, layer, reviewer_id, record, normalization)
+        _promote_review_record(story_path, report_path, record_path, record, normalization)
+    return report_path, record_path, record, normalization
 
 
 def _write_review_history(
@@ -286,14 +350,27 @@ def _write_review_history(
     layer: str,
     reviewer_id: str,
     record: dict[str, Any],
+    normalization: dict[str, Any] | None = None,
 ) -> Path:
     history_path = story_path / "runs" / f"chapter_{chapter:03d}" / str(record["run_id"]) / f"{layer}.{reviewer_id}.json"
     assert_story_write_allowed(history_path, story_path)
-    return safe_write_file(
+    path = safe_write_file(
         history_path,
         json.dumps(record, ensure_ascii=False, indent=2) + "\n",
         story_path,
     )
+    if normalization is not None:
+        receipt_path = history_path.with_suffix(".normalization.json")
+        receipt = {
+            **normalization,
+            "run_id": record["run_id"],
+            "draft_sha256": record["draft_sha256"],
+            "canonical_record": record,
+            "raw_response_text": normalization.get("raw_response_text", ""),
+        }
+        assert_story_write_allowed(receipt_path, story_path)
+        safe_write_file(receipt_path, json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", story_path)
+    return path
 
 
 def _promote_review_record(
@@ -301,6 +378,7 @@ def _promote_review_record(
     report_path: Path,
     record_path: Path,
     record: dict[str, Any],
+    normalization: dict[str, Any] | None = None,
 ) -> None:
     """Promote one validated run record and its canonical Markdown view."""
     for path, content in (
@@ -309,6 +387,17 @@ def _promote_review_record(
     ):
         assert_story_write_allowed(path, story_path)
         safe_write_file(path, content, story_path)
+    if normalization is not None:
+        receipt_path = record_path.with_suffix(".normalization.json")
+        receipt = {
+            **normalization,
+            "run_id": record["run_id"],
+            "draft_sha256": record["draft_sha256"],
+            "canonical_record": record,
+            "raw_response_text": normalization.get("raw_response_text", ""),
+        }
+        assert_story_write_allowed(receipt_path, story_path)
+        safe_write_file(receipt_path, json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", story_path)
 
 
 def _row_from_decision(
@@ -367,14 +456,13 @@ def _legacy_review_row(
     if not path.exists():
         return None
     text = path.read_text(encoding="utf-8")
-    if validate_review_report(text, reviewer_id):
+    try:
+        normalized = normalize_review_decision(text, reviewer_id, layer, "unknown", chapter)
+    except ValueError:
         return None
-    decision, counts = report_decision(text, can_block)
-    summary = re.sub(
-        r"\s+",
-        " ",
-        text.split("## Evidence", 1)[0].split("## Summary", 1)[-1],
-    ).strip()[:120]
+    decision = normalized["canonical"]
+    counts = review_decision_counts(decision)
+    summary = re.sub(r"\s+", " ", str(decision["summary"])).strip()[:120]
     return path, {
         "label": f"{layer}.{reviewer_id}",
         "layer": layer,
@@ -382,7 +470,7 @@ def _legacy_review_row(
         "can_block": can_block,
         "decision": decision,
         "counts": counts,
-        "rewrite_scope": report_rewrite_scope(text),
+        "rewrite_scope": review_decision_rewrite_scope(decision),
         "summary": summary or "No summary provided.",
     }
 
@@ -586,7 +674,12 @@ def run_novelness_gate(workspace_path: str | Path, story_id: str, chapter: int) 
     )
 
 
-def rebuild_review_gate(workspace_path: str | Path, story_id: str, chapter: int) -> dict[str, Path]:
+def rebuild_review_gate(
+    workspace_path: str | Path,
+    story_id: str,
+    chapter: int,
+    run_id: str | None = None,
+) -> dict[str, Path]:
     """Rebuild combined and quality gates from current valid reviewer reports."""
     story_path = resolve_story_path(workspace_path, story_id)
     reviewer_config = _load_yaml_file(story_path / "reviewers" / "reviewer_config.yaml")
@@ -620,7 +713,7 @@ def rebuild_review_gate(workspace_path: str | Path, story_id: str, chapter: int)
         story_path,
         story_id,
         chapter,
-        str(uuid4()),
+        str(run_id or uuid4()),
         _draft_hash(story_path, chapter),
         rows,
         combined_path,
@@ -789,14 +882,15 @@ def run_review(
         reports: list[Path] = []
         record_paths: list[Path] = []
         rows: list[dict[str, Any]] = []
-        pending_records: list[tuple[Path, Path, dict[str, Any]]] = []
+        pending_records: list[tuple[Path, Path, dict[str, Any], dict[str, Any]]] = []
         codex_thread_ids: set[str] = set()
         codex_subagent_thread_ids: set[str] = set()
         seen_codex_threads: set[str] = set()
         router_options = {
             **(options or {}),
             "output_schema_path": str(REVIEW_DECISION_SCHEMA_PATH),
-            "structured_output": True,
+            "flexible_output": True,
+            "preserve_raw_response": True,
         }
         for layer, reviewer_id, settings in review_specs:
             profile = _reviewer_profile(story_path, layer, reviewer_id, settings)
@@ -816,17 +910,25 @@ def run_review(
                 ),
             )
             model_chain = _model_chain(config, settings)
+            semantic_normalizer = _configured_semantic_normalizer(
+                config,
+                settings,
+                story_id,
+                chapter,
+                review_pack,
+            )
             result = attempt_structured_model_chain(
                 prompt,
                 model_chain,
                 config,
-                lambda text, current_id=reviewer_id, current_layer=layer: parse_review_decision(
+                lambda text, current_id=reviewer_id, current_layer=layer, normalizer=semantic_normalizer: normalize_review_decision(
                     text,
                     current_id,
                     current_layer,
                     story_id,
                     chapter,
-                ),
+                    normalizer,
+                )["canonical"],
                 lambda text, error, current_id=reviewer_id, current_layer=layer: _review_repair_prompt(
                     story_id,
                     chapter,
@@ -854,7 +956,7 @@ def run_review(
                         raise RuntimeError(f"reviewer {reviewer_id} reused Codex thread {child_id}")
                     codex_subagent_thread_ids.add(child_id)
                     seen_codex_threads.add(child_id)
-            report_path, record_path, record = _write_review_report(
+            report_path, record_path, record, normalization = _write_review_report(
                 story_path,
                 chapter,
                 layer,
@@ -868,11 +970,11 @@ def run_review(
             can_block = bool(settings.get("can_block_gate", True))
             reports.append(report_path)
             record_paths.append(record_path)
-            pending_records.append((report_path, record_path, record))
+            pending_records.append((report_path, record_path, record, normalization))
             rows.append(_row_from_decision(layer, reviewer_id, can_block, record["decision"]))
             attempts.extend(result.get("attempts", []))
 
-        for report_path, record_path, record in pending_records:
+        for report_path, record_path, record, normalization in pending_records:
             reviewer = record["reviewer"]
             _write_review_history(
                 story_path,
@@ -880,9 +982,10 @@ def run_review(
                 str(reviewer["type"]),
                 str(reviewer["id"]),
                 record,
+                normalization,
             )
-        for report_path, record_path, record in pending_records:
-            _promote_review_record(story_path, report_path, record_path, record)
+        for report_path, record_path, record, normalization in pending_records:
+            _promote_review_record(story_path, report_path, record_path, record, normalization)
         combined_path = _combine_reviews(story_path, chapter, reports)
         diagnostics_path = story_path / "context" / f"chapter_{chapter:03d}_writing_diagnostics.json"
         diagnostics = (

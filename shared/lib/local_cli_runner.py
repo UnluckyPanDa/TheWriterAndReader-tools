@@ -94,7 +94,13 @@ def _run_ollama_http_model(
     text = body.get("response")
     if not isinstance(text, str) or not text.strip():
         return {"ok": False, "text": "", "reason": "empty_response"}
-    return {"ok": True, "text": text.strip(), "reason": None, "model": model}
+    return {
+        "ok": True,
+        "text": text.strip(),
+        "raw_response_text": text,
+        "reason": None,
+        "model": model,
+    }
 
 
 def build_cli_command(provider_config: dict[str, Any], model_profile: dict[str, Any]) -> list[str]:
@@ -157,6 +163,16 @@ def run_local_cli_model(
 
     if completed.returncode != 0:
         reason = completed.stderr.strip() or f"exit_code_{completed.returncode}"
-        return {"ok": False, "text": completed.stdout.strip(), "reason": reason}
+        return {
+            "ok": False,
+            "text": completed.stdout.strip(),
+            "raw_response_text": completed.stdout,
+            "reason": reason,
+        }
 
-    return {"ok": True, "text": completed.stdout.strip(), "reason": None}
+    return {
+        "ok": True,
+        "text": completed.stdout.strip(),
+        "raw_response_text": completed.stdout,
+        "reason": None,
+    }

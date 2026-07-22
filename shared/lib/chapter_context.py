@@ -128,9 +128,11 @@ def load_chapter_inputs(story_path: str | Path, chapter: int) -> dict[str, str]:
         previous = chapter - 1
         previous_handoff, _ = _first_existing(
             [
+                root / "handover" / f"{chapter_stem(previous)}.md",
                 root / "summaries" / f"summary_chapter_{previous:03d}.md",
                 root / "reviews" / "chapter" / f"{previous:03d}" / "review_task_summary.md",
                 root / "reviews" / f"chapter_{previous:03d}" / "review_task_summary.md",
+                root / "context" / "handover.md",
             ]
         )
 
@@ -139,7 +141,5 @@ def load_chapter_inputs(story_path: str | Path, chapter: int) -> dict[str, str]:
         "context": context or "No active chapter context was found.",
         "instruction": instruction or "No active chapter generation instruction was found.",
         "previous_handoff": previous_handoff or "No prior accepted review handoff was found.",
-        "global_handover": load_markdown_file(root / "context" / "handover.md").strip()
-        or "No global handover was found.",
         "has_active_direction": "yes" if any((brief, context, instruction)) else "no",
     }

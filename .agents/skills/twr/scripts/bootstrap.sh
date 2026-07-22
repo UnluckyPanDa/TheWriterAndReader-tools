@@ -6,9 +6,9 @@ TWR_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/the-writer-and-reader"
 RUNTIME_DIR="$TWR_DATA_DIR/runtime"
 PYTHON_BIN="$RUNTIME_DIR/bin/python"
 TWR_BIN="$RUNTIME_DIR/bin/twr"
-MARKER="$TWR_DATA_DIR/initialized-0.1.5"
-WHEEL="$SKILL_DIR/assets/the_writer_and_reader_tools-0.1.5-py3-none-any.whl"
-EXPECTED_SHA256="723dda6a2e2b0e623b20e1bb6c4273401ca5934ada72498510bb8cb5532d8f69"
+MARKER="$TWR_DATA_DIR/initialized-0.1.7"
+WHEEL="$SKILL_DIR/assets/the_writer_and_reader_tools-0.1.7-py3-none-any.whl"
+EXPECTED_SHA256="804edd0092adbf85bcf6d130cdc4cd102abb4d65e22aaf0b26aa28e4873fe561"
 
 if [[ -f "$MARKER" && -x "$TWR_BIN" ]]; then
   printf '%s\n' "$TWR_BIN"

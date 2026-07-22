@@ -235,9 +235,6 @@ def build_write_pack(
 ## Reveal Lock [FORBIDDEN]
 {_non_empty(reveal_lock, "reveal lock")}
 
-## Previous Context and Handover [REFERENCE]
-{chapter_inputs["global_handover"]}
-
 ## Series Context [FACT]
 {_structured_facts(series_context, "series", relevance_text, 40)}
 

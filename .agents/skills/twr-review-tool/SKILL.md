@@ -101,3 +101,17 @@ Run configured reviewers:
 ```bash
 twr review run --workspace <workspace> --story <story-id> --chapter <chapter>
 ```
+
+For a private cross-device review, use the three-phase handoff:
+
+```bash
+twr review prepare --workspace <workspace> --story <story-id> --chapter <chapter>
+twr review execute --workspace <workspace> --story <story-id> --chapter <chapter> --request <request.json>
+twr review apply --workspace <workspace> --story <story-id> --chapter <chapter> --request <request.json> --result <review_result.json>
+```
+
+The execute phase writes only append-only run artifacts. Apply is gate-last,
+rejects stale or tampered inputs and mixed-run results, and remains safe to
+repeat. Model responses can be JSON, Markdown, fenced, legacy, or usable prose;
+canonical V1 records and raw-response normalization receipts are written for
+backward-compatible readers.
