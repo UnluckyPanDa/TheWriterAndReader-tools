@@ -55,6 +55,7 @@ model_profiles:
     model: qwen3:14b
     intelligence: medium
     context_window: 32000
+    num_ctx: 32768
   online_writer:
     provider: openai
     model: gpt-5.5

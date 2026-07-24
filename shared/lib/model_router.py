@@ -245,6 +245,7 @@ def _copy_result_metadata(
         "resolved_intelligence",
         "session",
         "usage",
+        "num_ctx",
     ):
         if key in result:
             target[key] = result[key]

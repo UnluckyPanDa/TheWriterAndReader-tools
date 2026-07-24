@@ -58,6 +58,22 @@ class CodexReviewRoutingTests(unittest.TestCase):
             validate_config(config),
         )
 
+    def test_ollama_context_size_must_be_a_positive_integer(self) -> None:
+        config = copy.deepcopy(load_config_example())
+        config["model_profiles"]["local_writer"]["num_ctx"] = "32768"
+
+        self.assertIn(
+            "model profile local_writer num_ctx must be a positive integer",
+            validate_config(config),
+        )
+
+        config = copy.deepcopy(load_config_example())
+        config["providers"]["ollama"]["num_ctx"] = 0
+        self.assertIn(
+            "provider ollama num_ctx must be a positive integer",
+            validate_config(config),
+        )
+
     def test_writing_stage_resolves_to_the_dedicated_codex_writer(self) -> None:
         config = load_config_example()
 

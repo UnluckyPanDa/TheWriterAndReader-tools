@@ -95,7 +95,13 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     providers = configured_providers if isinstance(configured_providers, dict) else {}
     codex_capabilities: set[str] = set()
     for name, provider in providers.items():
-        if not isinstance(provider, dict) or provider.get("type") != "codex_cli":
+        if not isinstance(provider, dict):
+            continue
+        if "num_ctx" in provider and (
+            type(provider["num_ctx"]) is not int or provider["num_ctx"] <= 0
+        ):
+            messages.append(f"provider {name} num_ctx must be a positive integer")
+        if provider.get("type") != "codex_cli":
             continue
         capability = provider.get("capability", "review")
         if capability not in CODEX_CAPABILITIES:
@@ -144,6 +150,10 @@ def validate_config(config: dict[str, Any]) -> list[str]:
         provider_name = provider.get("provider")
         if provider_name not in providers:
             messages.append(f"model profile {name} references unknown provider {provider_name}")
+        if "num_ctx" in provider and (
+            type(provider["num_ctx"]) is not int or provider["num_ctx"] <= 0
+        ):
+            messages.append(f"model profile {name} num_ctx must be a positive integer")
     for group, profiles in config.get("fallback_chains", {}).items():
         if not isinstance(profiles, list) or not profiles:
             messages.append(f"fallback chain {group} must be a non-empty list")

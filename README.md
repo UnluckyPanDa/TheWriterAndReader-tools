@@ -54,6 +54,10 @@ twr doctor --workspace /path/to/workspace
 
 Use `config.example.yaml` as the import/export shape. Online API and Codex CLI
 providers are disabled in the example until the user explicitly enables them.
+Set `num_ctx` on each Ollama-backed model profile to control the context size
+for that model. A request-level value overrides the selected profile, and the
+profile overrides an optional provider-wide default. If none is configured,
+Ollama uses its own default.
 
 The optional Codex writing and review routes use dedicated read-only profiles.
 Reviews also use one bounded evidence subagent:

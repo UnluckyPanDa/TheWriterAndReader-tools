@@ -19,6 +19,21 @@ def _is_ollama_provider(provider_config: dict[str, Any]) -> bool:
     return isinstance(command, str) and Path(command).name.lower() == "ollama"
 
 
+def _resolve_ollama_num_ctx(
+    provider_config: dict[str, Any],
+    model_profile: dict[str, Any],
+    options: dict[str, Any],
+) -> int | None:
+    for settings in (options, model_profile, provider_config):
+        if "num_ctx" not in settings:
+            continue
+        value = settings["num_ctx"]
+        if type(value) is not int or value <= 0:
+            raise ValueError("num_ctx_must_be_positive_integer")
+        return value
+    return None
+
+
 def _load_output_schema(options: dict[str, Any]) -> dict[str, Any]:
     schema_path = options.get("output_schema_path")
     if not isinstance(schema_path, (str, Path)):
@@ -47,6 +62,10 @@ def _run_ollama_http_model(
     structured_output = options.get("structured_output", False)
     if not isinstance(structured_output, bool):
         return {"ok": False, "text": "", "reason": "structured_output_must_be_boolean"}
+    try:
+        num_ctx = _resolve_ollama_num_ctx(provider_config, model_profile, options)
+    except ValueError as exc:
+        return {"ok": False, "text": "", "reason": str(exc)}
 
     payload: dict[str, Any] = {
         "model": model,
@@ -55,9 +74,11 @@ def _run_ollama_http_model(
         "think": False,
     }
     generation_options: dict[str, Any] = {}
-    for option_name in ("temperature", "num_ctx", "num_predict", "seed"):
+    for option_name in ("temperature", "num_predict", "seed"):
         if option_name in options:
             generation_options[option_name] = options[option_name]
+    if num_ctx is not None:
+        generation_options["num_ctx"] = num_ctx
     if generation_options:
         payload["options"] = generation_options
     if structured_output:
@@ -94,13 +115,16 @@ def _run_ollama_http_model(
     text = body.get("response")
     if not isinstance(text, str) or not text.strip():
         return {"ok": False, "text": "", "reason": "empty_response"}
-    return {
+    result = {
         "ok": True,
         "text": text.strip(),
         "raw_response_text": text,
         "reason": None,
         "model": model,
     }
+    if num_ctx is not None:
+        result["num_ctx"] = num_ctx
+    return result
 
 
 def build_cli_command(provider_config: dict[str, Any], model_profile: dict[str, Any]) -> list[str]:

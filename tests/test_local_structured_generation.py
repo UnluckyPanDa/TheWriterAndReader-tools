@@ -50,9 +50,89 @@ class LocalOllamaTransportTests(unittest.TestCase):
             )
         self.assertTrue(result["ok"])
         self.assertNotIn("format", post.call_args.kwargs["json"])
+        self.assertNotIn("options", post.call_args.kwargs["json"])
+
+    def test_selected_model_profile_controls_ollama_context_size(self) -> None:
+        for model, num_ctx in (("small:latest", 8192), ("large:latest", 65536)):
+            with self.subTest(model=model):
+                response = Mock()
+                response.raise_for_status.return_value = None
+                response.json.return_value = {"response": "Generated text."}
+                with patch("shared.lib.local_cli_runner.requests.post", return_value=response) as post:
+                    result = run_local_cli_model(
+                        {"command": "ollama", "enabled": True, "num_ctx": 4096},
+                        {"model": model, "num_ctx": num_ctx},
+                        "Write prose.",
+                    )
+
+                self.assertTrue(result["ok"])
+                self.assertEqual(result["model"], model)
+                self.assertEqual(result["num_ctx"], num_ctx)
+                self.assertEqual(post.call_args.kwargs["json"]["options"]["num_ctx"], num_ctx)
+
+    def test_request_context_size_overrides_profile_and_provider(self) -> None:
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"response": "Generated text."}
+        with patch("shared.lib.local_cli_runner.requests.post", return_value=response) as post:
+            result = run_local_cli_model(
+                {"command": "ollama", "enabled": True, "num_ctx": 4096},
+                {"model": "qwen3:14b", "num_ctx": 8192},
+                "Write prose.",
+                {"num_ctx": 16384},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["num_ctx"], 16384)
+        self.assertEqual(post.call_args.kwargs["json"]["options"]["num_ctx"], 16384)
+
+    def test_provider_context_size_is_used_without_profile_override(self) -> None:
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"response": "Generated text."}
+        with patch("shared.lib.local_cli_runner.requests.post", return_value=response) as post:
+            result = run_local_cli_model(
+                {"command": "ollama", "enabled": True, "num_ctx": 12288},
+                {"model": "qwen3:14b"},
+                "Write prose.",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["num_ctx"], 12288)
+        self.assertEqual(post.call_args.kwargs["json"]["options"]["num_ctx"], 12288)
+
+    def test_invalid_context_size_fails_before_ollama_request(self) -> None:
+        with patch("shared.lib.local_cli_runner.requests.post") as post:
+            result = run_local_cli_model(
+                {"command": "ollama", "enabled": True},
+                {"model": "qwen3:14b", "num_ctx": 0},
+                "Write prose.",
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "num_ctx_must_be_positive_integer")
+        post.assert_not_called()
 
 
 class StructuredFallbackTests(unittest.TestCase):
+    def test_context_size_is_preserved_in_attempt_metadata(self) -> None:
+        profile = {
+            "profile_name": "local_writer",
+            "provider": "ollama",
+            "provider_config": {"type": "local_cli", "enabled": True, "command": "ollama"},
+            "model": "qwen3:14b",
+            "num_ctx": 32768,
+        }
+
+        with patch(
+            "shared.lib.model_router.run_local_cli_model",
+            return_value={"ok": True, "text": "Draft.", "reason": None, "num_ctx": 32768},
+        ):
+            result = attempt_model_chain("Write prose.", [profile], {})
+
+        self.assertEqual(result["num_ctx"], 32768)
+        self.assertEqual(result["attempts"][0]["num_ctx"], 32768)
+
     def test_model_chain_reports_progress_without_changing_result(self) -> None:
         messages: list[str] = []
         profile = {
